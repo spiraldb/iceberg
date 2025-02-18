@@ -19,9 +19,7 @@
 package org.apache.iceberg.spark.source;
 
 import java.util.Map;
-import javax.annotation.Nonnull;
 import org.apache.iceberg.FileFormat;
-import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.ScanTask;
 import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.Schema;
@@ -32,7 +30,11 @@ import org.apache.iceberg.formats.FormatModelRegistry;
 import org.apache.iceberg.formats.ReadBuilder;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.InputFile;
-import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
+import org.apache.iceberg.io.datafile.DataFileServiceRegistry;
+import org.apache.iceberg.io.datafile.DeleteFilter;
+import org.apache.iceberg.io.datafile.ReaderBuilder;
+import org.apache.iceberg.orc.ORC;
+import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.spark.OrcBatchReadConf;
 import org.apache.iceberg.spark.ParquetBatchReadConf;
 import org.apache.iceberg.spark.ParquetReaderType;
@@ -40,9 +42,7 @@ import org.apache.iceberg.spark.data.vectorized.ColumnVectorWithFilter;
 import org.apache.iceberg.spark.data.vectorized.ColumnarBatchUtil;
 import org.apache.iceberg.spark.data.vectorized.UpdatableDeletedColumnVector;
 import org.apache.iceberg.spark.data.vectorized.VectorizedSparkParquetReaders;
-import org.apache.iceberg.util.Pair;
 import org.apache.spark.sql.catalyst.InternalRow;
-import org.apache.spark.sql.vectorized.ColumnVector;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
 
 abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBatch, T> {
@@ -71,105 +71,106 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
       long length,
       Expression residual,
       Map<Integer, ?> idToConstant,
-      @Nonnull SparkDeleteFilter deleteFilter) {
-    Class<? extends ColumnarBatch> readType =
-        useComet() ? VectorizedSparkParquetReaders.CometColumnarBatch.class : ColumnarBatch.class;
-    ReadBuilder<ColumnarBatch, ?> readBuilder =
-        FormatModelRegistry.readBuilder(format, readType, inputFile);
-
-    if (parquetConf != null) {
-      readBuilder = readBuilder.recordsPerBatch(parquetConf.batchSize());
-    } else if (orcConf != null) {
-      readBuilder = readBuilder.recordsPerBatch(orcConf.batchSize());
-    }
-
-    CloseableIterable<ColumnarBatch> iterable =
-        readBuilder
-            .project(deleteFilter.requiredSchema())
-            .idToConstant(idToConstant)
+      SparkDeleteFilter deleteFilter) {
+    ReaderBuilder readerBuilder =
+        DataFileServiceRegistry.read(
+                format,
+                ColumnarBatch.class.getName(),
+                parquetConf != null ? parquetConf.readerType().name() : null,
+                inputFile,
+                expectedSchema(),
+                idToConstant,
+                deleteFilter)
             .split(start, length)
             .filter(residual)
             .caseSensitive(caseSensitive())
             // Spark eagerly consumes the batches. So the underlying memory allocated could be
-            // reused without worrying about subsequent reads clobbering over each other. This
-            // improves read performance as every batch read doesn't have to pay the cost of
-            // allocating memory.
+            // reused
+            // without worrying about subsequent reads clobbering over each other. This improves
+            // read performance as every batch read doesn't have to pay the cost of allocating
+            // memory.
             .reuseContainers()
-            .withNameMapping(nameMapping())
-            .build();
-
-    return CloseableIterable.transform(iterable, new BatchDeleteFilter(deleteFilter)::filterBatch);
-  }
-
-  private boolean useComet() {
-    return parquetConf != null && parquetConf.readerType() == ParquetReaderType.COMET;
-  }
-
-  @VisibleForTesting
-  static class BatchDeleteFilter {
-    private final DeleteFilter<InternalRow> deletes;
-    private boolean hasIsDeletedColumn;
-    private int rowPositionColumnIndex = -1;
-
-    BatchDeleteFilter(DeleteFilter<InternalRow> deletes) {
-      this.deletes = deletes;
-
-      Schema schema = deletes.requiredSchema();
-      for (int i = 0; i < schema.columns().size(); i++) {
-        if (schema.columns().get(i).fieldId() == MetadataColumns.ROW_POSITION.fieldId()) {
-          this.rowPositionColumnIndex = i;
-        } else if (schema.columns().get(i).fieldId() == MetadataColumns.IS_DELETED.fieldId()) {
-          this.hasIsDeletedColumn = true;
-        }
-      }
+            .withNameMapping(nameMapping());
+    if (parquetConf != null) {
+      readerBuilder = readerBuilder.recordsPerBatch(parquetConf.batchSize());
+    } else if (orcConf != null) {
+      readerBuilder = readerBuilder.recordsPerBatch(orcConf.batchSize());
     }
 
-    ColumnarBatch filterBatch(ColumnarBatch batch) {
-      if (!needDeletes()) {
-        return batch;
-      }
+    return readerBuilder.build();
+  }
 
-      ColumnVector[] vectors = new ColumnVector[batch.numCols()];
-      for (int i = 0; i < batch.numCols(); i++) {
-        vectors[i] = batch.column(i);
-      }
-
-      int numLiveRows = batch.numRows();
-      long rowStartPosInBatch =
-          rowPositionColumnIndex == -1 ? -1 : vectors[rowPositionColumnIndex].getLong(0);
-
-      if (hasIsDeletedColumn) {
-        boolean[] isDeleted =
-            ColumnarBatchUtil.buildIsDeleted(vectors, deletes, rowStartPosInBatch, numLiveRows);
-        for (ColumnVector vector : vectors) {
-          if (vector instanceof UpdatableDeletedColumnVector) {
-            ((UpdatableDeletedColumnVector) vector).setValue(isDeleted);
-          }
-        }
-      } else {
-        Pair<int[], Integer> pair =
-            ColumnarBatchUtil.buildRowIdMapping(vectors, deletes, rowStartPosInBatch, numLiveRows);
-        if (pair != null) {
-          int[] rowIdMapping = pair.first();
-          numLiveRows = pair.second();
-          for (int i = 0; i < vectors.length; i++) {
-            vectors[i] = new ColumnVectorWithFilter(vectors[i], rowIdMapping);
-          }
-        }
-      }
-
-      if (deletes != null && deletes.hasEqDeletes()) {
-        vectors = ColumnarBatchUtil.removeExtraColumns(deletes, vectors);
-      }
-
-      ColumnarBatch output = new ColumnarBatch(vectors);
-      output.setNumRows(numLiveRows);
-      return output;
+  public static class IcebergParquetReaderService implements DataFileServiceRegistry.ReaderService {
+    @Override
+    public DataFileServiceRegistry.Key key() {
+      return new DataFileServiceRegistry.Key(
+          FileFormat.PARQUET, ColumnarBatch.class.getName(), ParquetReaderType.ICEBERG.name());
     }
 
-    private boolean needDeletes() {
-      return hasIsDeletedColumn
-          || (deletes != null && (deletes.hasEqDeletes() || deletes.hasPosDeletes()));
+    @Override
+    public ReaderBuilder builder(
+        InputFile inputFile,
+        Schema readSchema,
+        Map<Integer, ?> idToConstant,
+        DeleteFilter<?> deleteFilter) {
+      // get required schema if there are deletes
+      Schema requiredSchema = deleteFilter != null ? deleteFilter.requiredSchema() : readSchema;
+      return Parquet.read(inputFile)
+          .project(requiredSchema)
+          .createBatchedReaderFunc(
+              fileSchema ->
+                  VectorizedSparkParquetReaders.buildReader(
+                      requiredSchema,
+                      fileSchema,
+                      idToConstant,
+                      (DeleteFilter<InternalRow>) deleteFilter));
+    }
+  }
+
+  public static class CometParquetReaderService implements DataFileServiceRegistry.ReaderService {
+    @Override
+    public DataFileServiceRegistry.Key key() {
+      return new DataFileServiceRegistry.Key(
+          FileFormat.PARQUET, ColumnarBatch.class.getName(), ParquetReaderType.COMET.name());
+    }
+
+    @Override
+    public ReaderBuilder builder(
+        InputFile inputFile,
+        Schema readSchema,
+        Map<Integer, ?> idToConstant,
+        DeleteFilter<?> deleteFilter) {
+      // get required schema if there are deletes
+      Schema requiredSchema = deleteFilter != null ? deleteFilter.requiredSchema() : readSchema;
+      return Parquet.read(inputFile)
+          .project(requiredSchema)
+          .createBatchedReaderFunc(
+              fileSchema ->
+                  VectorizedSparkParquetReaders.buildCometReader(
+                      requiredSchema,
+                      fileSchema,
+                      idToConstant,
+                      (DeleteFilter<InternalRow>) deleteFilter));
+    }
+  }
+
+  public static class ORCReaderService implements DataFileServiceRegistry.ReaderService {
+    @Override
+    public DataFileServiceRegistry.Key key() {
+      return new DataFileServiceRegistry.Key(FileFormat.ORC, ColumnarBatch.class.getName());
+    }
+
+    @Override
+    public ReaderBuilder builder(
+        InputFile inputFile,
+        Schema readSchema,
+        Map<Integer, ?> idToConstant,
+        DeleteFilter<?> deleteFilter) {
+      return ORC.read(inputFile)
+          .project(ORC.schemaWithoutConstantAndMetadataFields(readSchema, idToConstant))
+          .createBatchedReaderFunc(
+              fileSchema ->
+                  VectorizedSparkOrcReaders.buildReader(readSchema, fileSchema, idToConstant));
     }
   }
 }
