@@ -75,6 +75,8 @@ import org.apache.iceberg.StructLike;
 import org.apache.iceberg.SystemConfigs;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.avro.AvroSchemaUtil;
+import org.apache.iceberg.data.Record;
+import org.apache.iceberg.data.parquet.GenericParquetReaders;
 import org.apache.iceberg.data.parquet.GenericParquetWriter;
 import org.apache.iceberg.deletes.EqualityDeleteWriter;
 import org.apache.iceberg.deletes.PositionDeleteWriter;
@@ -92,6 +94,13 @@ import org.apache.iceberg.io.DeleteSchemaUtil;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.OutputFile;
+import org.apache.iceberg.io.datafile.AppenderBuilder;
+import org.apache.iceberg.io.datafile.DataFileServiceRegistry;
+import org.apache.iceberg.io.datafile.DataWriterBuilder;
+import org.apache.iceberg.io.datafile.DeleteFilter;
+import org.apache.iceberg.io.datafile.EqualityDeleteWriterBuilder;
+import org.apache.iceberg.io.datafile.PositionDeleteWriterBuilder;
+import org.apache.iceberg.io.datafile.ReaderBuilder;
 import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.parquet.ParquetValueWriters.PositionDeleteStructWriter;
 import org.apache.iceberg.parquet.ParquetValueWriters.StructWriter;
@@ -156,7 +165,7 @@ public class Parquet {
     }
   }
 
-  public static class WriteBuilder implements InternalData.WriteBuilder {
+  public static class WriteBuilder implements AppenderBuilder {
     private final OutputFile file;
     private final Configuration conf;
     private final Map<String, String> metadata = Maps.newLinkedHashMap();
@@ -182,6 +191,7 @@ public class Parquet {
       }
     }
 
+    @Override
     public WriteBuilder forTable(Table table) {
       schema(table.schema());
       setAll(table.properties());
@@ -225,6 +235,7 @@ public class Parquet {
       return this;
     }
 
+    @Override
     public WriteBuilder setAll(Map<String, String> properties) {
       config.putAll(properties);
       return this;
@@ -250,6 +261,7 @@ public class Parquet {
       return this;
     }
 
+    @Override
     public WriteBuilder metricsConfig(MetricsConfig newMetricsConfig) {
       this.metricsConfig = newMetricsConfig;
       return this;
@@ -260,6 +272,7 @@ public class Parquet {
       return overwrite(true);
     }
 
+    @Override
     public WriteBuilder overwrite(boolean enabled) {
       this.writeMode = enabled ? ParquetFileWriter.Mode.OVERWRITE : ParquetFileWriter.Mode.CREATE;
       return this;
@@ -270,11 +283,13 @@ public class Parquet {
       return this;
     }
 
+    @Override
     public WriteBuilder withFileEncryptionKey(ByteBuffer encryptionKey) {
       this.fileEncryptionKey = encryptionKey;
       return this;
     }
 
+    @Override
     public WriteBuilder withAADPrefix(ByteBuffer aadPrefix) {
       this.fileAADPrefix = aadPrefix;
       return this;
@@ -779,7 +794,7 @@ public class Parquet {
     }
   }
 
-  public static class DataWriteBuilder {
+  public static class DataWriteBuilder implements DataWriterBuilder {
     private final WriteBuilder appenderBuilder;
     private final String location;
     private PartitionSpec spec = null;
@@ -792,6 +807,7 @@ public class Parquet {
       this.location = file.location();
     }
 
+    @Override
     public DataWriteBuilder forTable(Table table) {
       schema(table.schema());
       withSpec(table.spec());
@@ -800,35 +816,42 @@ public class Parquet {
       return this;
     }
 
+    @Override
     public DataWriteBuilder schema(Schema newSchema) {
       appenderBuilder.schema(newSchema);
       return this;
     }
 
+    @Override
     public DataWriteBuilder set(String property, String value) {
       appenderBuilder.set(property, value);
       return this;
     }
 
+    @Override
     public DataWriteBuilder setAll(Map<String, String> properties) {
       appenderBuilder.setAll(properties);
       return this;
     }
 
+    @Override
     public DataWriteBuilder meta(String property, String value) {
       appenderBuilder.meta(property, value);
       return this;
     }
 
+    @Override
     public DataWriteBuilder overwrite() {
       return overwrite(true);
     }
 
+    @Override
     public DataWriteBuilder overwrite(boolean enabled) {
       appenderBuilder.overwrite(enabled);
       return this;
     }
 
+    @Override
     public DataWriteBuilder metricsConfig(MetricsConfig newMetricsConfig) {
       appenderBuilder.metricsConfig(newMetricsConfig);
       return this;
@@ -840,47 +863,43 @@ public class Parquet {
       return this;
     }
 
-    public DataWriteBuilder createWriterFunc(
-        BiFunction<Schema, MessageType, ParquetValueWriter<?>> newCreateWriterFunc) {
-      appenderBuilder.createWriterFunc(newCreateWriterFunc);
-      return this;
-    }
-
-    public DataWriteBuilder variantShreddingFunc(VariantShreddingFunction func) {
-      appenderBuilder.variantShreddingFunc(func);
-      return this;
-    }
-
+    @Override
     public DataWriteBuilder withSpec(PartitionSpec newSpec) {
       this.spec = newSpec;
       return this;
     }
 
+    @Override
     public DataWriteBuilder withPartition(StructLike newPartition) {
       this.partition = newPartition;
       return this;
     }
 
+    @Override
     public DataWriteBuilder withKeyMetadata(EncryptionKeyMetadata metadata) {
       this.keyMetadata = metadata;
       return this;
     }
 
+    @Override
     public DataWriteBuilder withFileEncryptionKey(ByteBuffer fileEncryptionKey) {
       appenderBuilder.withFileEncryptionKey(fileEncryptionKey);
       return this;
     }
 
+    @Override
     public DataWriteBuilder withAADPrefix(ByteBuffer aadPrefix) {
       appenderBuilder.withAADPrefix(aadPrefix);
       return this;
     }
 
+    @Override
     public DataWriteBuilder withSortOrder(SortOrder newSortOrder) {
       this.sortOrder = newSortOrder;
       return this;
     }
 
+    @Override
     public <T> DataWriter<T> build() throws IOException {
       Preconditions.checkArgument(spec != null, "Cannot create data writer without spec");
       Preconditions.checkArgument(
@@ -908,7 +927,9 @@ public class Parquet {
     }
   }
 
-  public static class DeleteWriteBuilder {
+  public static class DeleteWriteBuilder
+      implements EqualityDeleteWriterBuilder<DeleteWriteBuilder>,
+          PositionDeleteWriterBuilder<DeleteWriteBuilder> {
     private final WriteBuilder appenderBuilder;
     private final String location;
     private BiFunction<Schema, MessageType, ParquetValueWriter<?>> createWriterFunc = null;
@@ -925,6 +946,7 @@ public class Parquet {
       this.location = file.location();
     }
 
+    @Override
     public DeleteWriteBuilder forTable(Table table) {
       rowSchema(table.schema());
       withSpec(table.spec());
@@ -933,30 +955,36 @@ public class Parquet {
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder set(String property, String value) {
       appenderBuilder.set(property, value);
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder setAll(Map<String, String> properties) {
       appenderBuilder.setAll(properties);
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder meta(String property, String value) {
       appenderBuilder.meta(property, value);
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder overwrite() {
       return overwrite(true);
     }
 
+    @Override
     public DeleteWriteBuilder overwrite(boolean enabled) {
       appenderBuilder.overwrite(enabled);
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder metricsConfig(MetricsConfig newMetricsConfig) {
       appenderBuilder.metricsConfig(newMetricsConfig);
       return this;
@@ -974,41 +1002,49 @@ public class Parquet {
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder rowSchema(Schema newSchema) {
       this.rowSchema = newSchema;
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder withSpec(PartitionSpec newSpec) {
       this.spec = newSpec;
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder withPartition(StructLike key) {
       this.partition = key;
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder withKeyMetadata(EncryptionKeyMetadata metadata) {
       this.keyMetadata = metadata;
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder withFileEncryptionKey(ByteBuffer fileEncryptionKey) {
       appenderBuilder.withFileEncryptionKey(fileEncryptionKey);
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder withAADPrefix(ByteBuffer aadPrefix) {
       appenderBuilder.withAADPrefix(aadPrefix);
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder equalityFieldIds(List<Integer> fieldIds) {
       this.equalityFieldIds = ArrayUtil.toIntArray(fieldIds);
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder equalityFieldIds(int... fieldIds) {
       this.equalityFieldIds = fieldIds;
       return this;
@@ -1019,11 +1055,13 @@ public class Parquet {
       return this;
     }
 
+    @Override
     public DeleteWriteBuilder withSortOrder(SortOrder newSortOrder) {
       this.sortOrder = newSortOrder;
       return this;
     }
 
+    @Override
     public <T> EqualityDeleteWriter<T> buildEqualityWriter() throws IOException {
       Preconditions.checkState(
           rowSchema != null, "Cannot create equality delete file without a schema");
@@ -1061,6 +1099,7 @@ public class Parquet {
           equalityFieldIds);
     }
 
+    @Override
     public <T> PositionDeleteWriter<T> buildPositionWriter() throws IOException {
       Preconditions.checkState(
           equalityFieldIds == null, "Cannot create position delete file using delete field ids");
@@ -1166,7 +1205,7 @@ public class Parquet {
     }
   }
 
-  public static class ReadBuilder implements InternalData.ReadBuilder {
+  public static class ReadBuilder implements ReaderBuilder, InternalData.ReadBuilder {
     private final InputFile file;
     private final Map<String, String> properties = Maps.newHashMap();
     private Long start = null;
@@ -1265,20 +1304,24 @@ public class Parquet {
       return this;
     }
 
+    @Override
     public ReadBuilder caseInsensitive() {
       return caseSensitive(false);
     }
 
+    @Override
     public ReadBuilder caseSensitive(boolean newCaseSensitive) {
       this.caseSensitive = newCaseSensitive;
       return this;
     }
 
+    @Override
     public ReadBuilder filterRecords(boolean newFilterRecords) {
       this.filterRecords = newFilterRecords;
       return this;
     }
 
+    @Override
     public ReadBuilder filter(Expression newFilter) {
       this.filter = newFilter;
       return this;
@@ -1335,34 +1378,7 @@ public class Parquet {
       return this;
     }
 
-    public ReadBuilder createBatchedReaderFunc(
-        BiFunction<Schema, MessageType, VectorizedReader<?>> func) {
-      Preconditions.checkArgument(
-          this.batchedReaderFunc == null,
-          "Cannot set batched reader function: batched reader function already set");
-      Preconditions.checkArgument(
-          this.batchedReaderFuncWithSchema == null,
-          "Cannot set reader function: batched reader function with schema already set");
-      Preconditions.checkArgument(
-          this.readerFunction == null,
-          "Cannot set batched reader function: ReaderFunction already set");
-      this.batchedReaderFuncWithSchema = func;
-      return this;
-    }
-
-    public ReadBuilder createReaderFunc(ReaderFunction reader) {
-      Preconditions.checkArgument(
-          this.batchedReaderFunc == null,
-          "Cannot set reader function: batched reader function already set");
-      Preconditions.checkArgument(
-          this.batchedReaderFuncWithSchema == null,
-          "Cannot set reader function: batched reader function with schema already set");
-      Preconditions.checkArgument(
-          this.readerFunction == null, "Cannot set reader function: reader function already set");
-      this.readerFunction = reader;
-      return this;
-    }
-
+    @Override
     public ReadBuilder set(String key, String value) {
       properties.put(key, value);
       return this;
@@ -1379,15 +1395,22 @@ public class Parquet {
 
     @Override
     public ReadBuilder reuseContainers() {
-      this.reuseContainers = true;
+      return reuseContainers(true);
+    }
+
+    @Override
+    public ReadBuilder reuseContainers(boolean newReuseContainers) {
+      this.reuseContainers = newReuseContainers;
       return this;
     }
 
+    @Override
     public ReadBuilder recordsPerBatch(int numRowsPerBatch) {
       this.maxRecordsPerBatch = numRowsPerBatch;
       return this;
     }
 
+    @Override
     public ReadBuilder withNameMapping(NameMapping newNameMapping) {
       this.nameMapping = newNameMapping;
       return this;
@@ -1405,11 +1428,13 @@ public class Parquet {
       return this;
     }
 
+    @Override
     public ReadBuilder withFileEncryptionKey(ByteBuffer encryptionKey) {
       this.fileEncryptionKey = encryptionKey;
       return this;
     }
 
+    @Override
     public ReadBuilder withAADPrefix(ByteBuffer aadPrefix) {
       this.fileAADPrefix = aadPrefix;
       return this;
@@ -1636,5 +1661,54 @@ public class Parquet {
       writer.appendFile(ParquetIO.file(Files.localInput(inputFile)));
     }
     writer.end(metadata);
+  }
+
+  public static class ReaderService implements DataFileServiceRegistry.ReaderService {
+    @Override
+    public DataFileServiceRegistry.Key key() {
+      return new DataFileServiceRegistry.Key(FileFormat.PARQUET, Record.class.getName());
+    }
+
+    @Override
+    public ReaderBuilder builder(
+        InputFile inputFile,
+        Schema readSchema,
+        Map<Integer, ?> idToConstant,
+        DeleteFilter<?> deleteFilter) {
+      return new ReadBuilder(inputFile)
+          .project(readSchema)
+          .createReaderFunc(
+              fileSchema ->
+                  GenericParquetReaders.buildReader(readSchema, fileSchema, idToConstant));
+    }
+  }
+
+  public static class WriterService implements DataFileServiceRegistry.WriterService<Object> {
+    @Override
+    public DataFileServiceRegistry.Key key() {
+      return new DataFileServiceRegistry.Key(FileFormat.PARQUET, Record.class.getName());
+    }
+
+    @Override
+    public AppenderBuilder appenderBuilder(EncryptedOutputFile outputFile, Object notUsed) {
+      return write(outputFile).createWriterFunc(GenericParquetWriter::buildWriter);
+    }
+
+    @Override
+    public DataWriterBuilder dataWriterBuilder(EncryptedOutputFile outputFile, Object notUsed) {
+      return writeData(outputFile).createWriterFunc(GenericParquetWriter::buildWriter);
+    }
+
+    @Override
+    public EqualityDeleteWriterBuilder<?> equalityDeleteWriterBuilder(
+        EncryptedOutputFile outputFile, Object notUsed) {
+      return writeDeletes(outputFile).createWriterFunc(GenericParquetWriter::buildWriter);
+    }
+
+    @Override
+    public PositionDeleteWriterBuilder<?> positionDeleteWriterBuilder(
+        EncryptedOutputFile outputFile, Object notUsed) {
+      return writeDeletes(outputFile).createWriterFunc(GenericParquetWriter::buildWriter);
+    }
   }
 }
