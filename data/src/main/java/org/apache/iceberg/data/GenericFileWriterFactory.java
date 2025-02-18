@@ -43,11 +43,8 @@ import org.apache.iceberg.orc.ORC;
 import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-public class GenericFileWriterFactory extends RegistryBasedFileWriterFactory<Record, Schema> {
-  private static final Logger LOG = LoggerFactory.getLogger(GenericFileWriterFactory.class);
+class GenericFileWriterFactory extends RegistryBasedFileWriterFactory<Record, Schema> {
 
   private Table table;
   private FileFormat format;
@@ -132,19 +129,18 @@ public class GenericFileWriterFactory extends RegistryBasedFileWriterFactory<Rec
     super(
         table,
         dataFileFormat,
-        Record.class,
+        Record.class.getName(),
         dataSchema,
         dataSortOrder,
         deleteFileFormat,
         equalityFieldIds,
         equalityDeleteRowSchema,
         equalityDeleteSortOrder,
+        positionDeleteRowSchema,
         ImmutableMap.of(),
         dataSchema,
-        equalityDeleteRowSchema);
-    this.table = table;
-    this.format = dataFileFormat;
-    this.positionDeleteRowSchema = positionDeleteRowSchema;
+        equalityDeleteRowSchema,
+        positionDeleteRowSchema);
   }
 
   static Builder builderFor(Table table) {
