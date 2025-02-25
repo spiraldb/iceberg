@@ -167,7 +167,7 @@ public class FlinkAppenderFactory implements FileAppenderFactory<RowData>, Seria
           .schema(schema)
           .metricsConfig(metricsConfig)
           .overwrite()
-          .appenderBuilder();
+          .appender();
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
@@ -208,7 +208,7 @@ public class FlinkAppenderFactory implements FileAppenderFactory<RowData>, Seria
           .withSpec(spec)
           .withKeyMetadata(outputFile.keyMetadata())
           .equalityFieldIds(equalityFieldIds)
-          .equalityWriterBuilder();
+          .equalityDeleteWriter();
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
@@ -229,7 +229,7 @@ public class FlinkAppenderFactory implements FileAppenderFactory<RowData>, Seria
           .rowSchema(posDeleteRowSchema)
           .withSpec(spec)
           .withKeyMetadata(outputFile.keyMetadata())
-          .positionWriterBuilder();
+          .positionDeleteWriter();
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
