@@ -97,7 +97,6 @@ import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.io.datafile.AppenderBuilder;
 import org.apache.iceberg.io.datafile.DataFileServiceRegistry;
 import org.apache.iceberg.io.datafile.DeleteFilter;
-import org.apache.iceberg.io.datafile.ReadBuilder;
 import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.parquet.ParquetValueWriters.PositionDeleteStructWriter;
 import org.apache.iceberg.parquet.ParquetValueWriters.StructWriter;
@@ -1249,8 +1248,10 @@ public class Parquet {
     private Expression filter = null;
     private ReadSupport<?> readSupport = null;
     private Function<MessageType, VectorizedReader<?>> batchedReaderFunc = null;
-    private BiFunction<Schema, MessageType, VectorizedReader<?>> batchedReaderFuncWithSchema = null;
-    private ReaderFunction readerFunction = null;
+    private Function<MessageType, ParquetValueReader<?>> readerFunc = null;
+    private BiFunction<Schema, MessageType, ParquetValueReader<?>> readerFuncWithSchema = null;
+    private BatchReaderFunction<?> batchReaderFunction = null;
+    private ReaderFunction<?> readerFunction = null;
     private boolean filterRecords = true;
     private boolean caseSensitive = true;
     private boolean callInit = false;
@@ -1259,8 +1260,6 @@ public class Parquet {
     private NameMapping nameMapping = null;
     private ByteBuffer fileEncryptionKey = null;
     private ByteBuffer fileAADPrefix = null;
-    private BatchReaderFunction<?> batchReaderFunction = null;
-    private ReaderFunction<?> readerFunction = null;
     private Map<Integer, ?> idToConstant = ImmutableMap.of();
     private DeleteFilter<?> deleteFilter = null;
 
@@ -1320,45 +1319,63 @@ public class Parquet {
       return this;
     }
 
+    @Deprecated
     public ReadBuilder createReaderFunc(
         Function<MessageType, ParquetValueReader<?>> newReaderFunction) {
-      Preconditions.checkArgument(
-          this.batchedReaderFunc == null,
-          "Cannot set reader function: batched reader function already set");
-      Preconditions.checkArgument(
-          this.batchedReaderFuncWithSchema == null,
-          "Cannot set reader function: batched reader function with schema already set");
-      Preconditions.checkArgument(
-          this.readerFunction == null, "Cannot set reader function: reader function already set");
-      this.readerFunction = new UnaryReaderFunction(newReaderFunction);
+      Preconditions.checkState(
+          readerFuncWithSchema == null
+              && readerFunction == null
+              && batchedReaderFunc == null
+              && batchReaderFunction == null,
+          "Cannot set multiple read builder functions");
+      this.readerFunc = newReaderFunction;
       return this;
     }
 
+    @Deprecated
     public ReadBuilder createReaderFunc(
         BiFunction<Schema, MessageType, ParquetValueReader<?>> newReaderFunction) {
-      Preconditions.checkArgument(
-          this.batchedReaderFunc == null,
-          "Cannot set reader function: batched reader function already set");
-      Preconditions.checkArgument(
-          this.batchedReaderFuncWithSchema == null,
-          "Cannot set reader function: batched reader function with schema already set");
-      Preconditions.checkArgument(
-          this.readerFunction == null, "Cannot set reader function: reader function already set");
-      this.readerFunction = new BinaryReaderFunction(newReaderFunction);
+      Preconditions.checkState(
+          readerFunc == null
+              && readerFunction == null
+              && batchedReaderFunc == null
+              && batchReaderFunction == null,
+          "Cannot set multiple read builder functions");
+      this.readerFuncWithSchema = newReaderFunction;
       return this;
     }
 
+    @Deprecated
     public ReadBuilder createBatchedReaderFunc(Function<MessageType, VectorizedReader<?>> func) {
-      Preconditions.checkArgument(
-          this.batchedReaderFunc == null,
-          "Cannot set batched reader function: batched reader function already set");
-      Preconditions.checkArgument(
-          this.batchedReaderFuncWithSchema == null,
-          "Cannot set reader function: batched reader function with schema already set");
-      Preconditions.checkArgument(
-          this.readerFunction == null,
-          "Cannot set batched reader function: ReaderFunction already set");
+      Preconditions.checkState(
+          readerFunc == null
+              && readerFuncWithSchema == null
+              && readerFunction == null
+              && batchReaderFunction == null,
+          "Cannot set multiple read builder functions");
       this.batchedReaderFunc = func;
+      return this;
+    }
+
+    public <D> ReadBuilder readerFunction(ReaderFunction<D> newReaderFunction) {
+      Preconditions.checkState(
+          readerFunc == null
+              && readerFuncWithSchema == null
+              && batchedReaderFunc == null
+              && batchReaderFunction == null,
+          "Cannot set multiple read builder functions");
+      this.readerFunction = newReaderFunction;
+      return this;
+    }
+
+    public <D> ReadBuilder batchReaderFunction(BatchReaderFunction<D> func) {
+      Preconditions.checkState(
+          readerFunc == null
+              && readerFuncWithSchema == null
+              && readerFunction == null
+              && batchedReaderFunc == null,
+          "Cannot set multiple read builder functions");
+      this.batchReaderFunction = func;
       return this;
     }
 
@@ -1421,22 +1438,6 @@ public class Parquet {
     @Override
     public ReadBuilder withAADPrefix(ByteBuffer aadPrefix) {
       this.fileAADPrefix = aadPrefix;
-      return this;
-    }
-
-    public <D> ReadBuilder readerFunction(ReaderFunction<D> newReaderFunction) {
-      Preconditions.checkArgument(
-          this.batchReaderFunction == null,
-          "Cannot set reader function: batched reader function already set");
-      this.readerFunction = newReaderFunction;
-      return this;
-    }
-
-    public <D> ReadBuilder batchReaderFunction(BatchReaderFunction<D> func) {
-      Preconditions.checkArgument(
-          this.readerFunction == null,
-          "Cannot set batched reader function: reader function already set");
-      this.batchReaderFunction = func;
       return this;
     }
 
