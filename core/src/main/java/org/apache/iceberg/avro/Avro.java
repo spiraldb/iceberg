@@ -61,7 +61,6 @@ import org.apache.iceberg.deletes.PositionDelete;
 import org.apache.iceberg.deletes.PositionDeleteWriter;
 import org.apache.iceberg.encryption.EncryptedOutputFile;
 import org.apache.iceberg.encryption.EncryptionKeyMetadata;
-import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.DataWriter;
 import org.apache.iceberg.io.DeleteSchemaUtil;
 import org.apache.iceberg.io.FileAppender;
@@ -69,6 +68,7 @@ import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.io.datafile.AppenderBuilder;
 import org.apache.iceberg.io.datafile.DataFileServiceRegistry;
+import org.apache.iceberg.io.datafile.ReadBuilder;
 import org.apache.iceberg.mapping.MappingUtil;
 import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
@@ -101,8 +101,7 @@ public class Avro {
     DataFileServiceRegistry.registerReader(
         FileFormat.AVRO,
         Record.class.getName(),
-        inputFile ->
-            new Avro.DataReadBuilder<>(inputFile).readerFunction(PlannedDataReader::create));
+        inputFile -> Avro.read(inputFile).readerFunction(PlannedDataReader::create));
 
     DataFileServiceRegistry.registerAppender(
         FileFormat.AVRO,
@@ -701,7 +700,8 @@ public class Avro {
     return new ReadBuilder(file);
   }
 
-  public static class ReadBuilder implements InternalData.ReadBuilder {
+  public static class ReadBuilder
+      implements InternalData.ReadBuilder, org.apache.iceberg.io.datafile.ReadBuilder {
     private final InputFile file;
     private final Map<String, String> renames = Maps.newLinkedHashMap();
     private final Map<Integer, Class<? extends StructLike>> typeMap = Maps.newHashMap();
@@ -713,6 +713,8 @@ public class Avro {
     private Function<Schema, DatumReader<?>> createReaderFunc = null;
     private BiFunction<org.apache.iceberg.Schema, Schema, DatumReader<?>> createReaderBiFunc = null;
     private Function<org.apache.iceberg.Schema, DatumReader<?>> createResolvingReaderFunc = null;
+    private Map<Integer, ?> idToConstant = ImmutableMap.of();
+    private BiFunction<org.apache.iceberg.Schema, Map<Integer, ?>, DatumReader<?>> readerFunction;
 
     @SuppressWarnings("UnnecessaryLambda")
     private final Function<org.apache.iceberg.Schema, DatumReader<?>> defaultCreateReaderFunc =
@@ -782,8 +784,15 @@ public class Avro {
       return this;
     }
 
+    @Override
     public ReadBuilder reuseContainers(boolean shouldReuse) {
       this.reuseContainers = shouldReuse;
+      return this;
+    }
+
+    @Override
+    public ReadBuilder idToConstant(Map<Integer, ?> newIdConstant) {
+      this.idToConstant = newIdConstant;
       return this;
     }
 
@@ -805,6 +814,7 @@ public class Avro {
       return this;
     }
 
+    @Override
     public ReadBuilder withNameMapping(NameMapping newNameMapping) {
       this.nameMapping = newNameMapping;
       return this;
@@ -812,6 +822,12 @@ public class Avro {
 
     public ReadBuilder classLoader(ClassLoader classLoader) {
       this.loader = classLoader;
+      return this;
+    }
+
+    public ReadBuilder readerFunction(
+        BiFunction<org.apache.iceberg.Schema, Map<Integer, ?>, DatumReader<?>> newReaderFunction) {
+      this.readerFunction = newReaderFunction;
       return this;
     }
 
@@ -833,6 +849,8 @@ public class Avro {
         reader = new ProjectionDatumReader<>(createReaderFunc, schema, renames, null);
       } else if (createResolvingReaderFunc != null) {
         reader = (DatumReader<D>) createResolvingReaderFunc.apply(schema);
+      } else if (readerFunction != null) {
+        reader = (DatumReader<D>) readerFunction.apply(schema, idToConstant);
       } else {
         reader = (DatumReader<D>) defaultCreateReaderFunc.apply(schema);
       }
@@ -845,74 +863,6 @@ public class Avro {
       if (reader instanceof SupportsCustomTypes) {
         ((SupportsCustomTypes) reader).setCustomTypes(rootType, typeMap);
       }
-
-      return new AvroIterable<>(
-          file, new NameMappingDatumReader<>(nameMapping, reader), start, length, reuseContainers);
-    }
-  }
-
-  public static class DataReadBuilder<D>
-      implements org.apache.iceberg.io.datafile.ReadBuilder<D, Object> {
-    private final InputFile file;
-    private Long start = null;
-    private Long length = null;
-    private org.apache.iceberg.Schema schema;
-    private boolean reuseContainers = false;
-    private Map<Integer, ?> idToConstant = ImmutableMap.of();
-    private NameMapping nameMapping;
-    private BiFunction<org.apache.iceberg.Schema, Map<Integer, ?>, DatumReader<D>> readerFunction;
-
-    public DataReadBuilder(InputFile file) {
-      Preconditions.checkNotNull(file, "Input file cannot be null");
-      this.file = file;
-    }
-
-    @Override
-    public DataReadBuilder<D> split(long newStart, long newLength) {
-      this.start = newStart;
-      this.length = newLength;
-      return this;
-    }
-
-    @Override
-    public DataReadBuilder<D> project(org.apache.iceberg.Schema newSchema) {
-      this.schema = newSchema;
-      return this;
-    }
-
-    @Override
-    public DataReadBuilder<D> reuseContainers(boolean newReuseContainers) {
-      this.reuseContainers = newReuseContainers;
-      return this;
-    }
-
-    @Override
-    public DataReadBuilder<D> idToConstant(Map<Integer, ?> newIdConstant) {
-      this.idToConstant = newIdConstant;
-      return this;
-    }
-
-    @Override
-    public DataReadBuilder<D> withNameMapping(NameMapping newNameMapping) {
-      this.nameMapping = newNameMapping;
-      return this;
-    }
-
-    public DataReadBuilder<D> readerFunction(
-        BiFunction<org.apache.iceberg.Schema, Map<Integer, ?>, DatumReader<D>> newReaderFunction) {
-      this.readerFunction = newReaderFunction;
-      return this;
-    }
-
-    @Override
-    public CloseableIterable<D> build() {
-      Preconditions.checkNotNull(schema, "Schema is required");
-
-      if (null == nameMapping) {
-        this.nameMapping = MappingUtil.create(schema);
-      }
-
-      DatumReader<D> reader = readerFunction.apply(schema, idToConstant);
 
       return new AvroIterable<>(
           file, new NameMappingDatumReader<>(nameMapping, reader), start, length, reuseContainers);
