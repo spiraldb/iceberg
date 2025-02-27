@@ -39,7 +39,8 @@ import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.types.StructType;
 
-class SparkFileWriterFactory extends RegistryBasedFileWriterFactory<InternalRow, StructType> {
+class SparkFileWriterFactory
+    extends RegistryBasedFileWriterFactory<InternalRow, Object, StructType> {
 
   /**
    * @deprecated This constructor is deprecated as of version 1.11.0 and will be removed in 1.12.0.
