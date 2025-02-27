@@ -131,7 +131,7 @@ public class ArrowReader extends CloseableGroup {
         FileFormat.PARQUET,
         ColumnarBatch.class.getName(),
         inputFile ->
-            new Parquet.DataReadBuilder<ColumnarBatch, Object>(inputFile)
+            Parquet.read(inputFile)
                 .batchReaderFunction(
                     (schema, messageType, idToConstant, deleteFilter) ->
                         VectorizedCombinedScanIterator.buildReader(
