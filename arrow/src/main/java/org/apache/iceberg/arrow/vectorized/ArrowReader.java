@@ -127,7 +127,7 @@ public class ArrowReader extends CloseableGroup {
   private final boolean reuseContainers;
 
   public static void register() {
-    DataFileServiceRegistry.registerRead(
+    DataFileServiceRegistry.registerReader(
         FileFormat.PARQUET,
         ColumnarBatch.class.getName(),
         inputFile ->
@@ -340,7 +340,7 @@ public class ArrowReader extends CloseableGroup {
       Preconditions.checkNotNull(location, "Could not find InputFile associated with FileScanTask");
       if (task.file().format() == FileFormat.PARQUET) {
         ReadBuilder<ColumnarBatch, ?> builder =
-            DataFileServiceRegistry.<ColumnarBatch, Object>readerBuilder(
+            DataFileServiceRegistry.<ColumnarBatch, Object>readBuilder(
                     FileFormat.PARQUET, ColumnarBatch.class.getName(), location)
                 .project(expectedSchema)
                 .split(task.start(), task.length())
