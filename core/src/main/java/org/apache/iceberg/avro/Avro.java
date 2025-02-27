@@ -98,17 +98,17 @@ public class Avro {
   }
 
   public static void register() {
-    DataFileServiceRegistry.registerRead(
+    DataFileServiceRegistry.registerReader(
         FileFormat.AVRO,
         Record.class.getName(),
         inputFile ->
             new Avro.DataReadBuilder<>(inputFile).readerFunction(PlannedDataReader::create));
 
-    DataFileServiceRegistry.registerWrite(
+    DataFileServiceRegistry.registerAppender(
         FileFormat.AVRO,
         Record.class.getName(),
         Avro::write,
-        initGenerator(
+        initializer(
             (avroSchema, nativeSchema) ->
                 org.apache.iceberg.data.avro.DataWriter.create(avroSchema),
             (avroSchema, nativeSchema) ->
@@ -127,12 +127,13 @@ public class Avro {
     return new WriteBuilder(file.encryptingOutputFile());
   }
 
-  public static <T> DataFileServiceRegistry.InitBuilder initGenerator(
+  public static <T> AppenderBuilder.Initializer initializer(
       BiFunction<Schema, T, DatumWriter<?>> writerFunction,
       BiFunction<Schema, T, DatumWriter<?>> deleteRowWriterFunction) {
-    return new DataFileServiceRegistry.InitBuilder() {
+    return new AppenderBuilder.Initializer() {
       @Override
-      public BiConsumer<WriteBuilder, T> build(DataFileServiceRegistry.WriteMode mode) {
+      @SuppressWarnings("unchecked")
+      public BiConsumer<WriteBuilder, T> buildInitializer(AppenderBuilder.WriteMode mode) {
         switch (mode) {
           case APPENDER:
           case DATA_WRITER:
@@ -212,7 +213,6 @@ public class Avro {
       return this;
     }
 
-    @Override
     public WriteBuilder setAll(Map<String, String> properties) {
       config.putAll(properties);
       return this;
