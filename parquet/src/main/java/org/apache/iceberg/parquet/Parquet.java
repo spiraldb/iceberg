@@ -151,10 +151,11 @@ public class Parquet {
     DataFileServiceRegistry.registerAppender(
         FileFormat.PARQUET,
         Record.class.getName(),
-        Parquet::write,
-        Parquet.initializer(
-            (nativeSchema, messageType) -> GenericParquetWriter.buildWriter(messageType),
-            Function.identity()));
+        outputFile ->
+            Parquet.write(outputFile)
+                .writerFunction(
+                    (nativeSchema, messageType) -> GenericParquetWriter.buildWriter(messageType))
+                .pathTransformFunc(Function.identity()));
   }
 
   @Deprecated
@@ -177,69 +178,25 @@ public class Parquet {
     }
   }
 
-  public static <T> AppenderBuilder.Initializer initializer(
-      BiFunction<T, MessageType, ParquetValueWriter<?>> writerFunction,
-      Function<CharSequence, ?> pathTransformFunc) {
-    return new AppenderBuilder.Initializer() {
-      @Override
-      @SuppressWarnings("unchecked")
-      public BiConsumer<WriteBuilder, T> buildInitializer(AppenderBuilder.WriteMode mode) {
-        switch (mode) {
-          case APPENDER:
-          case DATA_WRITER:
-            return (appender, nativeType) -> {
-              appender.createContextFunc(WriteBuilder.Context::dataContext);
-              appender.createWriterFunc(
-                  messageType -> writerFunction.apply(nativeType, messageType));
-            };
-          case EQUALITY_DELETE_WRITER:
-            return (appender, nativeType) -> {
-              appender.createContextFunc(WriteBuilder.Context::deleteContext);
-              appender.createWriterFunc(
-                  messageType -> writerFunction.apply(nativeType, messageType));
-            };
-          case POSITION_DELETE_WRITER:
-            return (appender, nativeType) -> {
-              appender.createContextFunc(WriteBuilder.Context::deleteContext);
-              appender.createWriterFunc(
-                  messageType ->
-                      new PositionDeleteStructWriter<T>(
-                          (StructWriter<?>) GenericParquetWriter.buildWriter(messageType),
-                          Function.identity()));
-            };
-          case POSITION_DELETE_WITH_ROW_WRITER:
-            return (appender, nativeType) -> {
-              appender.createContextFunc(WriteBuilder.Context::deleteContext);
-              appender.createWriterFunc(
-                  messageType ->
-                      new PositionDeleteStructWriter<T>(
-                          (StructWriter<?>) writerFunction.apply(nativeType, messageType),
-                          pathTransformFunc));
-            };
-          default:
-            throw new IllegalArgumentException("Not supported mode: " + mode);
-        }
-      }
-    };
-  }
-
   public static class WriteBuilder
-      implements InternalData.WriteBuilder, AppenderBuilder<WriteBuilder> {
+      implements InternalData.WriteBuilder, AppenderBuilder<WriteBuilder, Object> {
     private final OutputFile file;
     private final Configuration conf;
     private final Map<String, String> metadata = Maps.newLinkedHashMap();
     private final Map<String, String> config = Maps.newLinkedHashMap();
     private Schema schema = null;
-    private VariantShreddingFunction variantShreddingFunc = null;
+    private Object engineSchema = null;
     private String name = "table";
     private WriteSupport<?> writeSupport = null;
-    private BiFunction<Schema, MessageType, ParquetValueWriter<?>> createWriterFunc = null;
+    private Function<MessageType, ParquetValueWriter<?>> createWriterFunc = null;
+    private BiFunction<Object, MessageType, ParquetValueWriter<?>> writerFunction = null;
     private MetricsConfig metricsConfig = MetricsConfig.getDefault();
     private ParquetFileWriter.Mode writeMode = ParquetFileWriter.Mode.CREATE;
     private WriterVersion writerVersion = WriterVersion.PARQUET_1_0;
     private Function<Map<String, String>, Context> createContextFunc = Context::dataContext;
     private ByteBuffer fileEncryptionKey = null;
     private ByteBuffer fileAADPrefix = null;
+    private Function<CharSequence, ?> pathTransformFunc = null;
 
     private WriteBuilder(OutputFile file) {
       this.file = file;
@@ -278,11 +235,18 @@ public class Parquet {
     }
 
     @Override
+    public Object engineSchema(Object newEngineSchema) {
+      this.engineSchema = newEngineSchema;
+      return this;
+    }
+
+    @Override
     public WriteBuilder named(String newName) {
       this.name = newName;
       return this;
     }
 
+    /** Sets the writer support. Should only be used for testing. */
     public WriteBuilder writeSupport(WriteSupport<?> newWriteSupport) {
       this.writeSupport = newWriteSupport;
       return this;
@@ -294,6 +258,7 @@ public class Parquet {
       return this;
     }
 
+    @Deprecated
     public WriteBuilder setAll(Map<String, String> properties) {
       config.putAll(properties);
       return this;
@@ -313,15 +278,22 @@ public class Parquet {
 
     public WriteBuilder createWriterFunc(
         Function<MessageType, ParquetValueWriter<?>> newCreateWriterFunc) {
-      if (newCreateWriterFunc != null) {
-        this.createWriterFunc = (icebergSchema, type) -> newCreateWriterFunc.apply(type);
-      }
+      Preconditions.checkState(
+          writerFunction == null, "Cannot set multiple writer builder functions");
+      this.createWriterFunc = newCreateWriterFunc;
       return this;
     }
 
-    public WriteBuilder createWriterFunc(
-        BiFunction<Schema, MessageType, ParquetValueWriter<?>> newCreateWriterFunc) {
-      this.createWriterFunc = newCreateWriterFunc;
+    public WriteBuilder writerFunction(
+        BiFunction<Object, MessageType, ParquetValueWriter<?>> newWriterFunction) {
+      Preconditions.checkState(
+          createWriterFunc == null, "Cannot set multiple writer builder functions");
+      this.writerFunction = newWriterFunction;
+      return this;
+    }
+
+    public WriteBuilder pathTransformFunc(Function<CharSequence, ?> newPathTransformFunc) {
+      this.pathTransformFunc = newPathTransformFunc;
       return this;
     }
 
@@ -342,17 +314,32 @@ public class Parquet {
       return this;
     }
 
+    @Deprecated
+    // This should be coming from a writer configuration instead of having a separate method, so it
+    // is accessible through the generic API
     public WriteBuilder writerVersion(WriterVersion version) {
       this.writerVersion = version;
       return this;
     }
 
+    @Deprecated
     public WriteBuilder withFileEncryptionKey(ByteBuffer encryptionKey) {
+      return fileEncryptionKey(encryptionKey);
+    }
+
+    @Deprecated
+    public WriteBuilder withAADPrefix(ByteBuffer aadPrefix) {
+      return aADPrefix(aadPrefix);
+    }
+
+    @Override
+    public WriteBuilder fileEncryptionKey(ByteBuffer encryptionKey) {
       this.fileEncryptionKey = encryptionKey;
       return this;
     }
 
-    public WriteBuilder withAADPrefix(ByteBuffer aadPrefix) {
+    @Override
+    public WriteBuilder aADPrefix(ByteBuffer aadPrefix) {
       this.fileAADPrefix = aadPrefix;
       return this;
     }
@@ -429,6 +416,44 @@ public class Parquet {
                 }
                 withColumnStatsEnabled.accept(parquetColumnPath, Boolean.valueOf(isEnabled));
               });
+    }
+
+    @Override
+    public <D> FileAppender<D> build(WriteMode mode) throws IOException {
+      Preconditions.checkState(writerFunction != null, "Writer function has to be set.");
+      switch (mode) {
+        case APPENDER:
+        case DATA_WRITER:
+          this.createWriterFunc = messageType -> writerFunction.apply(engineSchema, messageType);
+          this.createContextFunc = Context::dataContext;
+          break;
+        case EQUALITY_DELETE_WRITER:
+          this.createWriterFunc = messageType -> writerFunction.apply(engineSchema, messageType);
+          this.createContextFunc = Context::deleteContext;
+          break;
+        case POSITION_DELETE_WRITER:
+          this.createWriterFunc =
+              messageType ->
+                  new PositionDeleteStructWriter<D>(
+                      (StructWriter<?>) GenericParquetWriter.buildWriter(messageType),
+                      Function.identity());
+          this.createContextFunc = Context::deleteContext;
+          break;
+        case POSITION_DELETE_WITH_ROW_WRITER:
+          Preconditions.checkState(
+              pathTransformFunc != null, "Path transformation function has to be set.");
+          this.createWriterFunc =
+              messageType ->
+                  new PositionDeleteStructWriter<D>(
+                      (StructWriter<?>) writerFunction.apply(engineSchema, messageType),
+                      pathTransformFunc);
+          this.createContextFunc = Context::deleteContext;
+          break;
+        default:
+          throw new IllegalArgumentException("Not supported mode: " + mode);
+      }
+
+      return build();
     }
 
     @Override
@@ -1239,7 +1264,8 @@ public class Parquet {
   }
 
   public static class ReadBuilder
-      implements InternalData.ReadBuilder, org.apache.iceberg.io.datafile.ReadBuilder {
+      implements InternalData.ReadBuilder,
+          org.apache.iceberg.io.datafile.ReadBuilder<ReadBuilder, Object> {
     private final InputFile file;
     private final Map<String, String> properties = Maps.newHashMap();
     private Long start = null;
@@ -1448,7 +1474,7 @@ public class Parquet {
     }
 
     @Override
-    public <F> ReadBuilder withDeleteFilter(DeleteFilter<F> newDeleteFilter) {
+    public ReadBuilder withDeleteFilter(DeleteFilter<Object> newDeleteFilter) {
       this.deleteFilter = newDeleteFilter;
       return this;
     }
