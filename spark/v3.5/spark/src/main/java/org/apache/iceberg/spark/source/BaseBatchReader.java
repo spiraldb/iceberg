@@ -42,11 +42,13 @@ import org.apache.iceberg.spark.data.vectorized.UpdatableDeletedColumnVector;
 import org.apache.iceberg.util.Pair;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.vectorized.ColumnVector;
+import org.apache.iceberg.spark.VortexBatchReadConf;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
 
 abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBatch, T> {
   private final ParquetBatchReadConf parquetConf;
   private final OrcBatchReadConf orcConf;
+  private final VortexBatchReadConf vortexConf;
 
   BaseBatchReader(
       Table table,
@@ -57,6 +59,7 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
       boolean caseSensitive,
       ParquetBatchReadConf parquetConf,
       OrcBatchReadConf orcConf,
+      VortexBatchReadConf vortexConf,
       boolean cacheDeleteFilesOnExecutors) {
     super(
         table,
@@ -68,6 +71,7 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
         cacheDeleteFilesOnExecutors);
     this.parquetConf = parquetConf;
     this.orcConf = orcConf;
+    this.vortexConf = vortexConf;
   }
 
   protected CloseableIterable<ColumnarBatch> newBatchIterable(
