@@ -23,6 +23,7 @@ import dev.vortex.api.DType;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.types.Type;
@@ -81,12 +82,8 @@ public class GenericVortexReader implements VortexRowReader<Record> {
     }
 
     @Override
-    public VortexValueReader<?> primitive(Type.PrimitiveType iPrimitive, DType primitive) {
-      // Based on the vortex primitive type, return a reader. We also need to make sure it's a
-      // reader that
-      // aligns to the Iceberg type that is expected.
-
-      switch (primitive.getVariant()) {
+    public VortexValueReader<?> primitive(Type.PrimitiveType iPrimitive, DType vortexType) {
+      switch (vortexType.getVariant()) {
         case NULL:
           throw new UnsupportedOperationException("Vortex Null type not supported");
         case BOOL:
@@ -115,9 +112,25 @@ public class GenericVortexReader implements VortexRowReader<Record> {
           return GenericVortexReaders.bytes();
         case EXTENSION:
           // TODO(aduffy): implement TIME/DATE/TIMESTAMP support
-          throw new UnsupportedOperationException("Vortex Extension type not supported");
+          if (vortexType.isDate()) {
+            boolean isMillis = vortexType.getTimeUnit() == DType.TimeUnit.MILLISECONDS;
+            return GenericVortexReaders.date(isMillis);
+          } else if (vortexType.isTimestamp()) {
+            Optional<String> timeZone = vortexType.getTimeZone();
+            boolean isNanosecond = vortexType.getTimeUnit() == DType.TimeUnit.NANOSECONDS;
+
+            if (timeZone.isEmpty()) {
+              return GenericVortexReaders.timestamp(isNanosecond);
+            } else {
+              return GenericVortexReaders.timestampTz(timeZone.get(), isNanosecond);
+            }
+          }
+          // TODO(aduffy): handle vortex.time extension type (not used by TPC-H data)
+
+          throw new UnsupportedOperationException("Unsupported Vortex Extension type in schema");
         default:
-          throw new UnsupportedOperationException("Unsupported type: " + primitive.getVariant());
+          throw new UnsupportedOperationException(
+              "Unsupported Vortex type: " + vortexType.getVariant());
       }
     }
   }

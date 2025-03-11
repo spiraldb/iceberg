@@ -19,10 +19,16 @@
 package org.apache.iceberg.data.vortex;
 
 import dev.vortex.api.Array;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.DateTimeUtil;
 import org.apache.iceberg.vortex.VortexValueReader;
 
 public class GenericVortexReaders {
@@ -54,6 +60,18 @@ public class GenericVortexReaders {
 
   public static VortexValueReader<byte[]> bytes() {
     return BytesReader.INSTANCE;
+  }
+
+  public static VortexValueReader<LocalDate> date(boolean isMillis) {
+    return new DateReader(isMillis);
+  }
+
+  public static VortexValueReader<LocalDateTime> timestamp(boolean nanosecond) {
+    return new TimestampReader(nanosecond);
+  }
+
+  public static VortexValueReader<OffsetDateTime> timestampTz(String timeZone, boolean nanosecond) {
+    return new TimestampTzReader(timeZone, nanosecond);
   }
 
   // Read a struct of record values instead.
@@ -177,6 +195,66 @@ public class GenericVortexReaders {
     @Override
     public byte[] readNonNull(Array array, int row) {
       return array.getBinary(row);
+    }
+  }
+
+  private static class DateReader implements VortexValueReader<LocalDate> {
+    private final boolean isMillis;
+
+    DateReader(boolean isMillis) {
+      this.isMillis = isMillis;
+    }
+
+    @Override
+    public LocalDate readNonNull(Array array, int row) {
+      int days;
+      if (isMillis) {
+        days = (int) Math.floorDiv(array.getLong(row), 86_400_000L);
+      } else {
+        days = array.getInt(row);
+      }
+
+      return DateTimeUtil.dateFromDays(days);
+    }
+  }
+
+  private static class TimestampReader implements VortexValueReader<LocalDateTime> {
+    private final boolean nanosecond;
+
+    private TimestampReader(boolean nanosecond) {
+      this.nanosecond = nanosecond;
+    }
+
+    @Override
+    public LocalDateTime readNonNull(Array array, int row) {
+      long measure = array.getLong(row);
+      if (nanosecond) {
+        return DateTimeUtil.timestampFromNanos(measure);
+      } else {
+        return DateTimeUtil.timestampFromMicros(measure);
+      }
+    }
+  }
+
+  private static class TimestampTzReader implements VortexValueReader<OffsetDateTime> {
+    private final ZoneId timeZone;
+    private final boolean nanosecond;
+
+    private TimestampTzReader(String timeZone, boolean nanosecond) {
+      this.timeZone = ZoneId.of(timeZone);
+      this.nanosecond = nanosecond;
+    }
+
+    @Override
+    public OffsetDateTime readNonNull(Array array, int row) {
+      long measure = array.getLong(row);
+      long nanoAdjustment;
+      if (nanosecond) {
+        nanoAdjustment = measure;
+      } else {
+        nanoAdjustment = Math.multiplyExact(1_000, measure);
+      }
+      return OffsetDateTime.ofInstant(Instant.EPOCH.plusNanos(nanoAdjustment), timeZone);
     }
   }
 }
