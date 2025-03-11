@@ -30,6 +30,7 @@ import org.apache.iceberg.vortex.VortexRowReader;
 import org.apache.iceberg.vortex.VortexSchemaWithTypeVisitor;
 import org.apache.iceberg.vortex.VortexValueReader;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 
 /** Read Vortex as Spark {@link InternalRow}. */
 public class SparkVortexReader implements VortexRowReader<InternalRow> {
@@ -56,7 +57,7 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
         List<DType> types,
         List<String> names,
         List<VortexValueReader<?>> fields) {
-      return null;
+      return new StructReader(fields);
     }
 
     @Override
@@ -95,6 +96,25 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
         default:
           throw new UnsupportedOperationException("Unsupported type: " + icebergType);
       }
+    }
+  }
+
+  static class StructReader implements VortexValueReader<InternalRow> {
+    private final List<VortexValueReader<?>> fields;
+
+    private StructReader(List<VortexValueReader<?>> fields) {
+      this.fields = fields;
+    }
+
+    @Override
+    public InternalRow readNonNull(Array array, int row) {
+      GenericInternalRow result = new GenericInternalRow(fields.size());
+      for (int i = 0; i < fields.size(); i++) {
+        VortexValueReader<?> fieldReader = fields.get(i);
+        Object field = fieldReader.read(array.getField(i), row);
+        result.update(i, field);
+      }
+      return result;
     }
   }
 }
