@@ -20,6 +20,7 @@ package org.apache.iceberg.vortex;
 
 import dev.vortex.api.DType;
 import java.util.Map;
+import java.util.function.Function;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.InternalData;
 import org.apache.iceberg.Schema;
@@ -63,6 +64,7 @@ public final class Vortex {
     private final InputFile inputFile;
     private Schema schema;
     private ReaderFunction<?> readerFunction;
+    private BatchReaderFunction<?> batchReaderFunction;
     private Map<Integer, ?> idToConstant;
 
     ReadBuilder(InputFile inputFile) {
@@ -71,6 +73,7 @@ public final class Vortex {
 
     @Override
     public ReadBuilder project(Schema projectedSchema) {
+      // TODO(aduffy): align the projection schema with the read schema.
       this.schema = projectedSchema;
       return this;
     }
@@ -78,6 +81,7 @@ public final class Vortex {
     @Override
     public ReadBuilder set(String key, String value) {
       // No-op.
+      // TODO(aduffy): support configuring object store credentials here.
       return this;
     }
 
@@ -129,13 +133,34 @@ public final class Vortex {
       return this;
     }
 
+    public <D> ReadBuilder batchReaderFunction(BatchReaderFunction<D> newReaderFunc) {
+      Preconditions.checkState(
+          readerFunction == null && batchReaderFunction == null,
+          "Cannot set multiple read builder functions");
+      this.batchReaderFunction = newReaderFunc;
+      return this;
+    }
+
     @Override
     public <D> CloseableIterable<D> build() {
       Preconditions.checkState(schema != null, "schema must be configured");
-      Preconditions.checkState(readerFunction != null, "readerFunction must be configured");
-      return new VortexIterable<>(
-          inputFile,
-          fileSchema -> (VortexRowReader<D>) readerFunction.read(schema, fileSchema, idToConstant));
+      Preconditions.checkState(
+          readerFunction != null || batchReaderFunction != null,
+          "must set one of readerFunction, batchReaderFunction");
+
+      Function<DType, VortexRowReader<D>> readerFunc =
+          readerFunction == null
+              ? null
+              : fileSchema ->
+                  (VortexRowReader<D>) readerFunction.read(schema, fileSchema, idToConstant);
+      Function<DType, VortexBatchReader<D>> batchReaderFunc =
+          batchReaderFunction == null
+              ? null
+              : fileSchema ->
+                  (VortexBatchReader<D>)
+                      batchReaderFunction.batchRead(schema, fileSchema, idToConstant);
+
+      return new VortexIterable<>(inputFile, readerFunc, batchReaderFunc);
     }
   }
 }

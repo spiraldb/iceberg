@@ -36,6 +36,7 @@ import org.apache.iceberg.spark.data.SparkPlannedAvroReader;
 import org.apache.iceberg.spark.data.SparkVortexReader;
 import org.apache.iceberg.spark.data.vectorized.VectorizedSparkOrcReaders;
 import org.apache.iceberg.spark.data.vectorized.VectorizedSparkParquetReaders;
+import org.apache.iceberg.spark.data.vectorized.VectorizedSparkVortexReaders;
 import org.apache.iceberg.vortex.Vortex;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.types.StructType;
@@ -101,6 +102,12 @@ public class DataFileServices {
         ColumnarBatch.class.getName(),
         inputFile ->
             ORC.read(inputFile).batchReaderFunction(VectorizedSparkOrcReaders::buildReader));
+
+    DataFileServiceRegistry.registerReader(
+        FileFormat.VORTEX,
+        ColumnarBatch.class.getName(),
+        inputFile ->
+            Vortex.read(inputFile).batchReaderFunction(VectorizedSparkVortexReaders::buildReader));
 
     DataFileServiceRegistry.registerAppender(
         FileFormat.AVRO,

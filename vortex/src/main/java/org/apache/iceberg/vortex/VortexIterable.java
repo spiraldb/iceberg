@@ -33,10 +33,17 @@ import org.apache.iceberg.io.InputFile;
 public class VortexIterable<T> extends CloseableGroup implements CloseableIterable<T> {
   private final InputFile inputFile;
   private final Function<DType, VortexRowReader<T>> rowReaderFunc;
+  private final Function<DType, VortexBatchReader<T>> batchReaderFunction;
 
-  VortexIterable(InputFile inputFile, Function<DType, VortexRowReader<T>> readerFunction) {
+  // TODO(aduffy): pushdown Iceberg Expression as Vortex ExprRef.
+
+  VortexIterable(
+      InputFile inputFile,
+      Function<DType, VortexRowReader<T>> readerFunction,
+      Function<DType, VortexBatchReader<T>> batchReaderFunction) {
     this.inputFile = inputFile;
     this.rowReaderFunc = readerFunction;
+    this.batchReaderFunction = batchReaderFunction;
   }
 
   @Override
@@ -48,10 +55,43 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     addCloseable(fileType);
 
     ArrayStream batchStream = vortexFile.newScan(ScanOptions.of());
-    return new ArrayStreamIterator<>(batchStream, rowReaderFunc.apply(fileType));
+
+    if (rowReaderFunc != null) {
+      VortexRowReader<T> rowFunction = rowReaderFunc.apply(fileType);
+      return new VortexRowIterator<>(batchStream, rowFunction);
+    } else {
+      VortexBatchReader<T> batchTransform = batchReaderFunction.apply(fileType);
+      CloseableIterator<Array> batchIterator = new VortexBatchIterator(batchStream);
+      return CloseableIterator.transform(batchIterator, batchTransform::read);
+    }
   }
 
-  static class ArrayStreamIterator<T> implements CloseableIterator<T> {
+  static class VortexBatchIterator implements CloseableIterator<Array> {
+    private final ArrayStream stream;
+
+    private VortexBatchIterator(ArrayStream stream) {
+      this.stream = stream;
+    }
+
+    @Override
+    public Array next() {
+      Array result = stream.getCurrent();
+
+      return result;
+    }
+
+    @Override
+    public boolean hasNext() {
+      return stream.next();
+    }
+
+    @Override
+    public void close() {
+      stream.close();
+    }
+  }
+
+  static class VortexRowIterator<T> implements CloseableIterator<T> {
     private final ArrayStream stream;
     private final VortexRowReader<T> rowReader;
 
@@ -59,7 +99,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     private int batchIndex = 0;
     private int batchLen = 0;
 
-    ArrayStreamIterator(ArrayStream stream, VortexRowReader<T> rowReader) {
+    VortexRowIterator(ArrayStream stream, VortexRowReader<T> rowReader) {
       this.stream = stream;
       this.rowReader = rowReader;
       if (stream.next()) {
