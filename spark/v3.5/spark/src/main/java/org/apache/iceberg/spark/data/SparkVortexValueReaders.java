@@ -108,7 +108,7 @@ public class SparkVortexValueReaders {
           this.reader = (array, row) -> Math.multiplyExact(array.getLong(row), 86_400_000_000L);
           break;
         default:
-            throw new IllegalStateException("Unexpected value: " + vortexTimeUnit);
+          throw new IllegalStateException("Unexpected value: " + vortexTimeUnit);
       }
     }
 

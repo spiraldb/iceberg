@@ -35,6 +35,7 @@ import org.apache.iceberg.spark.ParquetBatchReadConf;
 import org.apache.iceberg.spark.ParquetReaderType;
 import org.apache.iceberg.spark.SparkReadConf;
 import org.apache.iceberg.spark.SparkUtil;
+import org.apache.iceberg.spark.VortexBatchReadConf;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -127,7 +128,8 @@ class SparkBatch implements Batch {
 
     } else if (useOrcBatchReads()) {
       return new SparkColumnarReaderFactory(orcBatchReadConf());
-
+    } else if (useVortexBatchReads()) {
+      return new SparkColumnarReaderFactory(vortexBatchReadConf());
     } else {
       return new SparkRowReaderFactory();
     }
@@ -142,6 +144,10 @@ class SparkBatch implements Batch {
 
   private OrcBatchReadConf orcBatchReadConf() {
     return ImmutableOrcBatchReadConf.builder().batchSize(readConf.parquetBatchSize()).build();
+  }
+
+  private VortexBatchReadConf vortexBatchReadConf() {
+    return ImmutableVortexBatchReadConf.builder().batchSize(readConf.parquetBatchSize()).build();
   }
 
   // conditions for using Parquet batch reads:
@@ -189,6 +195,11 @@ class SparkBatch implements Batch {
   private boolean useOrcBatchReads() {
     return readConf.orcVectorizationEnabled()
         && taskGroups.stream().allMatch(this::supportsOrcBatchReads);
+  }
+
+  private boolean useVortexBatchReads() {
+    // TODO(aduffy): do we ever want to not use this?
+    return true;
   }
 
   private boolean supportsOrcBatchReads(ScanTask task) {

@@ -52,6 +52,11 @@ public final class Vortex {
     VortexRowReader<R> read(Schema schema, DType fileSchema, Map<Integer, ?> idToConstant);
   }
 
+  public interface BatchReaderFunction<T> {
+    VortexBatchReader<T> batchRead(
+        Schema icebergSchema, DType vortexSchema, Map<Integer, ?> idToConstant);
+  }
+
   public static final class ReadBuilder
       implements InternalData.ReadBuilder,
           org.apache.iceberg.io.datafile.ReadBuilder<ReadBuilder, Object> {
