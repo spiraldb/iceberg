@@ -26,6 +26,13 @@ import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 
 public abstract class VortexSchemaWithTypeVisitor<T> {
+  public abstract T struct(
+      Types.StructType iStruct, List<DType> types, List<String> names, List<T> fields);
+
+  public abstract T list(Types.ListType iList, DType array, T element);
+
+  public abstract T primitive(Type.PrimitiveType iPrimitive, DType primitive);
+
   // What is the point of this??
   public static <T> T visit(
       Schema expectedSchema, DType readVortexSchema, VortexSchemaWithTypeVisitor<T> visitor) {
@@ -63,11 +70,4 @@ public abstract class VortexSchemaWithTypeVisitor<T> {
     }
     return visitor.struct(struct, fields, names, results);
   }
-
-  public abstract T struct(
-      Types.StructType iStruct, List<DType> types, List<String> names, List<T> fields);
-
-  public abstract T list(Types.ListType iList, DType array, T element);
-
-  public abstract T primitive(Type.PrimitiveType iPrimitive, DType primitive);
 }

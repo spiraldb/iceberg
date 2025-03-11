@@ -19,7 +19,7 @@
 package org.apache.iceberg.vortex;
 
 import static org.apache.iceberg.types.Types.NestedField.required;
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
 import java.io.File;
 import java.io.IOException;
@@ -33,7 +33,6 @@ import org.apache.iceberg.data.vortex.GenericVortexReader;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.SeekableInputStream;
-import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.io.ByteStreams;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.Test;
@@ -46,11 +45,11 @@ public final class VortexTest {
           required(2, "name", Types.StringType.get()),
           required(3, "salary", Types.LongType.get()));
 
-  @TempDir private static File TEMP_DIR;
+  @TempDir private static File tempDir;
 
   @Test
   public void testGenericReader() throws IOException {
-    InputFile inputFile = loadResourceFile("employees.vortex", TEMP_DIR);
+    InputFile inputFile = loadResourceFile("employees.vortex", tempDir);
 
     try (CloseableIterable<Record> records =
         Vortex.read(inputFile)
@@ -58,12 +57,11 @@ public final class VortexTest {
             .readerFunction(GenericVortexReader::buildReader)
             .build()) {
 
-      assertEquals(
-          ImmutableList.of(
+      assertThat(records)
+          .containsExactly(
               makeEmployee(1L, "Alice", 1_000),
               makeEmployee(2L, "Bob", 2_000),
-              makeEmployee(3L, "Carol", 3_000)),
-          ImmutableList.copyOf(records));
+              makeEmployee(3L, "Carol", 3_000));
     }
   }
 
