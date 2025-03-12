@@ -165,7 +165,7 @@ public final class Vortex {
                   (VortexBatchReader<D>)
                       batchReaderFunction.batchRead(schema, fileSchema, idToConstant);
 
-      return new VortexIterable<>(inputFile, readerFunc, batchReaderFunc);
+      return new VortexIterable<>(inputFile, schema, readerFunc, batchReaderFunc);
     }
   }
 }

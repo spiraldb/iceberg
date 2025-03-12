@@ -24,47 +24,53 @@ import dev.vortex.api.DType;
 import dev.vortex.api.ScanOptions;
 import dev.vortex.impl.NativeFile;
 import java.io.IOException;
+import java.util.List;
 import java.util.function.Function;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.hadoop.HadoopInputFile;
 import org.apache.iceberg.io.CloseableGroup;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.types.Types;
 
 public class VortexIterable<T> extends CloseableGroup implements CloseableIterable<T> {
   private final InputFile inputFile;
   private final Function<DType, VortexRowReader<T>> rowReaderFunc;
   private final Function<DType, VortexBatchReader<T>> batchReaderFunction;
+  private final List<String> projection;
 
   // TODO(aduffy): pushdown Iceberg Expression as Vortex ExprRef.
 
   VortexIterable(
       InputFile inputFile,
+      Schema icebergSchema,
       Function<DType, VortexRowReader<T>> readerFunction,
       Function<DType, VortexBatchReader<T>> batchReaderFunction) {
     this.inputFile = inputFile;
+    this.projection = Lists.transform(icebergSchema.columns(), Types.NestedField::name);
     this.rowReaderFunc = readerFunction;
     this.batchReaderFunction = batchReaderFunction;
   }
 
   @Override
   public CloseableIterator<T> iterator() {
+    // TODO(aduffy): this HadoopInputFile assumption is maybe silly.
     String path = ((HadoopInputFile) inputFile).getPath().toUri().getPath();
     NativeFile vortexFile = NativeFile.open(path);
     addCloseable(vortexFile);
 
-    DType fileType = vortexFile.getDType();
-    addCloseable(fileType);
-
-    ArrayStream batchStream = vortexFile.newScan(ScanOptions.of());
+    ArrayStream batchStream =
+        vortexFile.newScan(ScanOptions.builder().addAllColumns(projection).build());
     Preconditions.checkNotNull(batchStream, "batchStream");
 
     if (rowReaderFunc != null) {
-      VortexRowReader<T> rowFunction = rowReaderFunc.apply(fileType);
+      VortexRowReader<T> rowFunction = rowReaderFunc.apply(batchStream.getDataType());
       return new VortexRowIterator<>(batchStream, rowFunction);
     } else {
-      VortexBatchReader<T> batchTransform = batchReaderFunction.apply(fileType);
+      VortexBatchReader<T> batchTransform = batchReaderFunction.apply(batchStream.getDataType());
       CloseableIterator<Array> batchIterator = new VortexBatchIterator(batchStream);
       return CloseableIterator.transform(batchIterator, batchTransform::read);
     }

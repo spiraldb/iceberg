@@ -47,7 +47,6 @@ public class VectorizedSparkVortexReaders {
         ColumnVector[] vectors = new ColumnVector[fieldCount];
         for (int i = 0; i < fieldCount; i++) {
           vectors[i] = new VortexColumnVector(batch.getField(i));
-          System.out.println("VECTORS[" + i + "] = " + vectors[i]);
         }
 
         return new ColumnarBatch(vectors, (int) batch.getLen());
