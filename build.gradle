@@ -812,10 +812,15 @@ project(':iceberg-vortex') {
 
     annotationProcessor libs.immutables.value
     compileOnly libs.immutables.value
+    compileOnly(libs.hadoop3.client) {
+      exclude group: 'org.apache.avro', module: 'avro'
+    }
 
     implementation(libs.vortex.jni) {
       exclude group: 'org.codehaus.jackson'
     }
+
+    testImplementation libs.hadoop3.common
   }
 }
 

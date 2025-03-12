@@ -25,10 +25,12 @@ import dev.vortex.api.ScanOptions;
 import dev.vortex.impl.NativeFile;
 import java.io.IOException;
 import java.util.function.Function;
+import org.apache.iceberg.hadoop.HadoopInputFile;
 import org.apache.iceberg.io.CloseableGroup;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.io.InputFile;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 
 public class VortexIterable<T> extends CloseableGroup implements CloseableIterable<T> {
   private final InputFile inputFile;
@@ -48,13 +50,15 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
   @Override
   public CloseableIterator<T> iterator() {
-    NativeFile vortexFile = NativeFile.open(inputFile.location());
+    String path = ((HadoopInputFile) inputFile).getPath().toUri().getPath();
+    NativeFile vortexFile = NativeFile.open(path);
     addCloseable(vortexFile);
 
     DType fileType = vortexFile.getDType();
     addCloseable(fileType);
 
     ArrayStream batchStream = vortexFile.newScan(ScanOptions.of());
+    Preconditions.checkNotNull(batchStream, "batchStream");
 
     if (rowReaderFunc != null) {
       VortexRowReader<T> rowFunction = rowReaderFunc.apply(fileType);
@@ -67,7 +71,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   }
 
   static class VortexBatchIterator implements CloseableIterator<Array> {
-    private final ArrayStream stream;
+    private ArrayStream stream;
 
     private VortexBatchIterator(ArrayStream stream) {
       this.stream = stream;
@@ -87,7 +91,10 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
     @Override
     public void close() {
-      stream.close();
+      if (stream != null) {
+        stream.close();
+      }
+      stream = null;
     }
   }
 

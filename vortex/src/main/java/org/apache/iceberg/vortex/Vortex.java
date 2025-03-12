@@ -73,22 +73,27 @@ public final class Vortex {
 
     @Override
     public ReadBuilder project(Schema projectedSchema) {
-      // TODO(aduffy): align the projection schema with the read schema.
       this.schema = projectedSchema;
       return this;
     }
 
     @Override
+    public ReadBuilder recordsPerBatch(int numRowsPerBatch) {
+      // TODO(aduffy): will we care about this?
+      return this;
+    }
+
+    @Override
     public ReadBuilder set(String key, String value) {
-      // No-op.
       // TODO(aduffy): support configuring object store credentials here.
       return this;
     }
 
     @Override
     public ReadBuilder split(long newStart, long newLength) {
-      // TODO(aduffy): support splitting, need to expose split size configuration over the Rust FFI.
-      throw new UnsupportedOperationException("Splitting is not supported yet.");
+      // TODO(aduffy): support splitting? These are in terms of file bytes, which is pretty
+      // annoying.
+      return this;
     }
 
     @Override
