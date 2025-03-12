@@ -67,8 +67,6 @@ public final class VortexSparkEte {
     String employeesLocation = employeesDir.getAbsolutePath();
     vortexTable = tables.create(EMPLOYEE_SCHEMA, employeesLocation);
 
-    // Add a new file for the table.
-
     // Import the file from the classpath into the table's data directory.
     File dataDir = new File(employeesDir, "data");
     dataDir.mkdirs();
@@ -82,7 +80,7 @@ public final class VortexSparkEte {
       DataFile newDataFile =
           DataFiles.builder(PartitionSpec.unpartitioned())
               .withInputFile(inputFile)
-              .withRecordCount(4)
+              .withRecordCount(3)
               .build();
 
       AppendFiles append = vortexTable.newAppend();
@@ -95,7 +93,7 @@ public final class VortexSparkEte {
       assertThat(
               Iterables.getOnlyElement(vortexTable.currentSnapshot().addedDataFiles(io))
                   .recordCount())
-          .isEqualTo(4);
+          .isEqualTo(3);
     }
   }
 
@@ -113,12 +111,15 @@ public final class VortexSparkEte {
 
     System.out.println("LOADING FROM TABLE: " + vortexTable.location());
     Dataset<Row> employees = spark.read().format("iceberg").load(vortexTable.location());
-    assertThat(employees.count()).isEqualTo(4);
+    assertThat(employees.count()).isEqualTo(3);
 
     employees.printSchema();
+    // Show all columns
     employees.show();
-    //    employees.select("name").show();
-    //    assertThat(employees.where("id > 1").count()).isEqualTo(3);
+    // Show with projection
+    employees.select("name").show();
+    // Show with filter
+    assertThat(employees.where("id > 1").count()).isEqualTo(2);
   }
 
   private static void loadToPath(String resourcePath, Path outputPath) {

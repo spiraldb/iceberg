@@ -92,7 +92,7 @@ spark41 = "4.1.1"
 sqlite-jdbc = "3.51.2.0"
 testcontainers = "2.0.3"
 tez08 = { strictly = "0.8.4"}  # see rich version usage explanation above
-vortex = "0.25.2-40-g40b9fae" # todo(aduffy): replace with stable published version
+vortex = "0.25.2-74-g0925927" # todo(aduffy): replace with stable published version
 
 [libraries]
 activation = { module = "javax.activation:activation", version.ref = "activation" }
