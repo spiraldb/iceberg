@@ -21,8 +21,6 @@ package org.apache.iceberg.vortex;
 import static org.apache.iceberg.types.Types.NestedField.required;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 
-import com.google.common.base.Preconditions;
-import com.google.common.collect.Iterables;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -40,6 +38,8 @@ import org.apache.iceberg.Tables;
 import org.apache.iceberg.hadoop.HadoopTables;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.InputFile;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.io.ByteStreams;
 import org.apache.iceberg.types.Types;
 import org.apache.spark.sql.Dataset;
