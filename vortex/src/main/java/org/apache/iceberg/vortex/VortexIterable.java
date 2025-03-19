@@ -86,6 +86,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   private static File newVortexFile(InputFile inputFile) {
     Preconditions.checkArgument(
         inputFile instanceof HadoopInputFile, "Vortex only supports HadoopInputFile currently");
+    LOG.debug("opening Vortex file: {}", inputFile);
 
     HadoopInputFile hadoopInputFile = (HadoopInputFile) inputFile;
     URI path = hadoopInputFile.getPath().toUri();
@@ -105,9 +106,6 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   static final String FS_S3A_SESSION_TOKEN = "fs.s3a.session.token";
   static final String FS_S3A_ENDPOINT = "fs.s3a.endpoint";
   static final String FS_S3A_ENDPOINT_REGION = "fs.s3a.endpoint.region";
-  static final String FS_S3A_CREDENTIALS_PROVIDER = "fs.s3a.aws.credentials.provider";
-  static final String ANONYMOUS_CREDENTIALS_PROVIDER =
-      "org.apache.hadoop.fs.s3a.AnonymousAWSCredentialsProvider";
 
   private static Map<String, String> s3PropertiesFromHadoopConf(Configuration hadoopConf) {
     VortexS3Properties properties = new VortexS3Properties();
@@ -124,21 +122,17 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
           properties.setSessionToken(entry.getValue());
           break;
         case FS_S3A_ENDPOINT:
-          properties.setEndpoint(entry.getValue());
+          String qualified = entry.getValue();
+          if (!qualified.startsWith("http")) {
+            qualified = "https://" + qualified;
+          }
+          properties.setEndpoint(qualified);
           break;
         case FS_S3A_ENDPOINT_REGION:
           properties.setRegion(entry.getValue());
           break;
-        case FS_S3A_CREDENTIALS_PROVIDER:
-          if (entry.getValue().equals(ANONYMOUS_CREDENTIALS_PROVIDER)) {
-            properties.setSkipSignature(true);
-          } else {
-            throw new IllegalArgumentException(
-                "Vortex does not support custom AWSCredentialsProvider: " + entry.getValue());
-          }
-          break;
         default:
-          LOG.warn(
+          LOG.trace(
               "Ignoring unknown s3a connector property: {}={}", entry.getKey(), entry.getValue());
           break;
       }
