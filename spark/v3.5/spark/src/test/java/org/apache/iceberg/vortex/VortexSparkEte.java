@@ -172,6 +172,27 @@ public final class VortexSparkEte {
     lineitems.select("l_shipdate").limit(10).show();
   }
 
+  @Test
+  public void testS3() {
+    try (SparkSession spark =
+        SparkSession.builder()
+            .master("local")
+            .appName("testS3")
+            .config("fs.s3a.access.key", System.getenv("AWS_ACCESS_KEY"))
+            .config("fs.s3a.secret.key", System.getenv("AWS_SECRET_KEY"))
+            .getOrCreate()) {
+
+      // Open a file against the remote
+      Dataset<Row> df =
+          spark
+              .read()
+              .format("parquet")
+              .load("s3a://vortex-iceberg-dev/iceberg-parquet/customer.parquet");
+      df.show();
+      df.printSchema();
+    }
+  }
+
   interface SourceFile {
     void writeToPath(Path path);
   }

@@ -83,7 +83,7 @@ spark-hive35 = "3.5.4"
 sqlite-jdbc = "3.49.1.0"
 testcontainers = "1.20.5"
 tez08 = { strictly = "0.8.4"}  # see rich version usage explanation above
-vortex = "0.25.2-110-g8d482a8" # todo(aduffy): replace with stable published version
+vortex = "0.25.2-112-g2ffa5a0" # todo(aduffy): replace with stable published version
 
 [libraries]
 activation = { module = "javax.activation:activation", version.ref = "activation" }
@@ -126,6 +126,7 @@ flink120-streaming-java = { module = "org.apache.flink:flink-streaming-java", ve
 flink120-table-api-java-bridge = { module = "org.apache.flink:flink-table-api-java-bridge", version.ref = "flink120" }
 google-libraries-bom = { module = "com.google.cloud:libraries-bom", version.ref = "google-libraries-bom" }
 guava-guava = { module = "com.google.guava:guava", version.ref = "guava" }
+hadoop3-aws = { module = "org.apache.hadoop:hadoop-aws", version.ref = "hadoop3" }
 hadoop3-client = { module = "org.apache.hadoop:hadoop-client", version.ref = "hadoop3" }
 hadoop3-common = { module = "org.apache.hadoop:hadoop-common", version.ref = "hadoop3" }
 hadoop3-hdfs = { module = "org.apache.hadoop:hadoop-hdfs", version.ref = "hadoop3" }
