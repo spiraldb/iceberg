@@ -28,9 +28,11 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.hadoop.HadoopInputFile;
 import org.apache.iceberg.io.CloseableGroup;
 import org.apache.iceberg.io.CloseableIterable;
@@ -46,6 +48,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   private static final Logger LOG = LoggerFactory.getLogger(VortexIterable.class);
 
   private final InputFile inputFile;
+  private final Optional<Expression> filterPredicate;
   private final Function<DType, VortexRowReader<T>> rowReaderFunc;
   private final Function<DType, VortexBatchReader<T>> batchReaderFunction;
   private final List<String> projection;
@@ -55,10 +58,13 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   VortexIterable(
       InputFile inputFile,
       Schema icebergSchema,
+      Optional<Expression> filterPredicate,
       Function<DType, VortexRowReader<T>> readerFunction,
       Function<DType, VortexBatchReader<T>> batchReaderFunction) {
     this.inputFile = inputFile;
+    // We have the file schema, we need to assign Iceberg IDs to the entire file schema
     this.projection = Lists.transform(icebergSchema.columns(), Types.NestedField::name);
+    this.filterPredicate = filterPredicate;
     this.rowReaderFunc = readerFunction;
     this.batchReaderFunction = batchReaderFunction;
   }
@@ -69,8 +75,17 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     File vortexFile = newVortexFile(inputFile);
     addCloseable(vortexFile);
 
+    // Return the filtered scan, and then the projection, etc.
+    Optional<dev.vortex.api.Expression> scanPredicate =
+        filterPredicate.map(
+            icebergExpression -> {
+              Schema fileSchema = VortexSchemas.convert(vortexFile.getDType());
+              return ConvertFilterToVortex.convert(fileSchema, icebergExpression);
+            });
+
     ArrayStream batchStream =
-        vortexFile.newScan(ScanOptions.builder().addAllColumns(projection).build());
+        vortexFile.newScan(
+            ScanOptions.builder().addAllColumns(projection).predicate(scanPredicate).build());
     Preconditions.checkNotNull(batchStream, "batchStream");
 
     if (rowReaderFunc != null) {

@@ -20,6 +20,7 @@ package org.apache.iceberg.vortex;
 
 import dev.vortex.api.DType;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.InternalData;
@@ -27,9 +28,11 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.data.vortex.GenericVortexReader;
+import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.datafile.DataFileServiceRegistry;
+import org.apache.iceberg.io.datafile.ReadBuilder;
 import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 
@@ -66,6 +69,7 @@ public final class Vortex {
     private ReaderFunction<?> readerFunction;
     private BatchReaderFunction<?> batchReaderFunction;
     private Map<Integer, ?> idToConstant;
+    private Optional<Expression> filterPredicate;
 
     ReadBuilder(InputFile inputFile) {
       this.inputFile = inputFile;
@@ -92,7 +96,15 @@ public final class Vortex {
     @Override
     public ReadBuilder split(long newStart, long newLength) {
       // TODO(aduffy): support splitting? These are in terms of file bytes, which is pretty
-      // annoying.
+      //  annoying.
+      return this;
+    }
+
+    @Override
+    public ReadBuilder filter(Expression newFilter) {
+      // At least print the filter.
+      System.err.println("VORTEX: PUSHED FILTER: " + newFilter);
+      this.filterPredicate = Optional.of(newFilter);
       return this;
     }
 
@@ -165,7 +177,7 @@ public final class Vortex {
                   (VortexBatchReader<D>)
                       batchReaderFunction.batchRead(schema, fileSchema, idToConstant);
 
-      return new VortexIterable<>(inputFile, schema, readerFunc, batchReaderFunc);
+      return new VortexIterable<>(inputFile, schema, filterPredicate, readerFunc, batchReaderFunc);
     }
   }
 }
