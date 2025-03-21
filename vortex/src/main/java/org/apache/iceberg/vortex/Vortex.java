@@ -69,7 +69,7 @@ public final class Vortex {
     private ReaderFunction<?> readerFunction;
     private BatchReaderFunction<?> batchReaderFunction;
     private Map<Integer, ?> idToConstant;
-    private Optional<Expression> filterPredicate;
+    private Optional<Expression> filterPredicate = Optional.empty();
 
     ReadBuilder(InputFile inputFile) {
       this.inputFile = inputFile;

@@ -26,6 +26,7 @@ import dev.vortex.api.expressions.Literal;
 import dev.vortex.api.expressions.Not;
 import java.nio.ByteBuffer;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.expressions.BoundPredicate;
@@ -34,6 +35,7 @@ import org.apache.iceberg.expressions.ExpressionVisitors;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.expressions.UnboundPredicate;
 import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.Types;
 
 /**
  * Convert an Iceberg filter expression into a valid Vortex pruning predicate that can be pushed
@@ -172,9 +174,19 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
             return Literal.string(uuid.toString());
           }
         }
-        // TODO(aduffy): timestamp and date support
       case TIME:
-        return Literal.int64((Long) literal.value());
+        return Literal.timeMicros((Long) literal.value());
+      case DATE:
+        return Literal.dateDays((Integer) literal.value());
+      case TIMESTAMP:
+        Types.TimestampType timestampType = (Types.TimestampType) termType;
+        if (timestampType.shouldAdjustToUTC()) {
+          throw new UnsupportedOperationException("Handling of timestamps with timezones not yet supported");
+        } else {
+          // Iceberg always stores timestamp in microseconds.
+          // TODO(aduffy): get the Vortex type so we know if we need to convert to different precision.
+          return Literal.timestampMicros((Long) literal.value(), Optional.empty());
+        }
       default:
         throw new UnsupportedOperationException("Unsupported Literal type: " + termType);
     }
