@@ -22,8 +22,8 @@ import dev.vortex.api.Array;
 import dev.vortex.api.ArrayStream;
 import dev.vortex.api.DType;
 import dev.vortex.api.File;
+import dev.vortex.api.Files;
 import dev.vortex.api.ScanOptions;
-import dev.vortex.impl.Files;
 import java.io.IOException;
 import java.net.URI;
 import java.util.List;
@@ -165,12 +165,12 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
     @Override
     public Array next() {
-      return stream.getCurrent();
+      return stream.next();
     }
 
     @Override
     public boolean hasNext() {
-      return stream.next();
+      return stream.hasNext();
     }
 
     @Override
@@ -193,8 +193,8 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     VortexRowIterator(ArrayStream stream, VortexRowReader<T> rowReader) {
       this.stream = stream;
       this.rowReader = rowReader;
-      if (stream.next()) {
-        currentBatch = stream.getCurrent();
+      if (stream.hasNext()) {
+        currentBatch = stream.next();
         batchLen = (int) currentBatch.getLen();
       }
     }
@@ -224,8 +224,8 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     }
 
     private void advance() {
-      if (stream.next()) {
-        currentBatch = stream.getCurrent();
+      if (stream.hasNext()) {
+        currentBatch = stream.next();
         batchIndex = 0;
         batchLen = (int) currentBatch.getLen();
       } else {

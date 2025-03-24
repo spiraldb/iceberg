@@ -181,10 +181,12 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
       case TIMESTAMP:
         Types.TimestampType timestampType = (Types.TimestampType) termType;
         if (timestampType.shouldAdjustToUTC()) {
-          throw new UnsupportedOperationException("Handling of timestamps with timezones not yet supported");
+          throw new UnsupportedOperationException(
+              "Handling of timestamps with timezones not yet supported");
         } else {
           // Iceberg always stores timestamp in microseconds.
-          // TODO(aduffy): get the Vortex type so we know if we need to convert to different precision.
+          // TODO(aduffy): get the Vortex type so we know if we need to convert to different
+          // precision.
           return Literal.timestampMicros((Long) literal.value(), Optional.empty());
         }
       default:
