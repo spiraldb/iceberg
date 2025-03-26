@@ -53,8 +53,6 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   private final Function<DType, VortexBatchReader<T>> batchReaderFunction;
   private final List<String> projection;
 
-  // TODO(aduffy): pushdown Iceberg Expression as Vortex ExprRef.
-
   VortexIterable(
       InputFile inputFile,
       Schema icebergSchema,

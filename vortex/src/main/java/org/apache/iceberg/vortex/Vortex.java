@@ -103,7 +103,6 @@ public final class Vortex {
     @Override
     public ReadBuilder filter(Expression newFilter) {
       // At least print the filter.
-      System.err.println("VORTEX: PUSHED FILTER: " + newFilter);
       this.filterPredicate = Optional.of(newFilter);
       return this;
     }
