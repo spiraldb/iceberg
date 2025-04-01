@@ -20,6 +20,9 @@ package org.apache.iceberg.spark.source;
 
 import static org.apache.iceberg.MetadataColumns.DELETE_FILE_ROW_FIELD_NAME;
 
+import dev.vortex.api.DType;
+import java.util.Map;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.avro.Avro;
 import org.apache.iceberg.data.DeleteFilter;
 import org.apache.iceberg.data.ObjectModelRegistry;
@@ -84,7 +87,16 @@ public class SparkObjectModels {
 
     ObjectModelRegistry.registerObjectModel(
         new Vortex.ObjectModel<ColumnarBatch, StructType>(
-            SPARK_VECTORIZED_OBJECT_MODEL, VectorizedSparkVortexReaders::buildReader));
+            SPARK_VECTORIZED_OBJECT_MODEL,
+            (Schema icebergSchema,
+                DType vortexSchema,
+                Map<Integer, ?> idToConstant,
+                Object deleteFilter) ->
+                VectorizedSparkVortexReaders.buildReader(
+                    icebergSchema,
+                    vortexSchema,
+                    idToConstant,
+                    (DeleteFilter<InternalRow>) deleteFilter)));
   }
 
   private SparkObjectModels() {}

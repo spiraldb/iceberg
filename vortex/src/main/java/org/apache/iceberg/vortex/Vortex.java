@@ -44,9 +44,9 @@ public final class Vortex {
     VortexRowReader<R> read(Schema schema, DType fileSchema, Map<Integer, ?> idToConstant);
   }
 
-  public interface BatchReaderFunction<T> {
+  public interface BatchReaderFunction<T, F> {
     VortexBatchReader<T> batchRead(
-        Schema icebergSchema, DType vortexSchema, Map<Integer, ?> idToConstant);
+        Schema icebergSchema, DType vortexSchema, Map<Integer, ?> idToConstant, F deleteFilter);
   }
 
   public static class ObjectModel<ResultT, EngineT>
@@ -54,20 +54,20 @@ public final class Vortex {
 
     private final String name;
     private final ReaderFunction<ResultT> readerFunction;
-    private final BatchReaderFunction<ResultT> batchReaderFunction;
+    private final BatchReaderFunction<ResultT, ?> batchReaderFunction;
 
     public ObjectModel(String name, ReaderFunction<ResultT> readerFunction) {
       this(name, readerFunction, null);
     }
 
-    public ObjectModel(String name, BatchReaderFunction<ResultT> batchReaderFunction) {
+    public ObjectModel(String name, BatchReaderFunction<ResultT, ?> batchReaderFunction) {
       this(name, null, batchReaderFunction);
     }
 
     public ObjectModel(
         String name,
         ReaderFunction<ResultT> readerFunction,
-        BatchReaderFunction<ResultT> batchReaderFunction) {
+        BatchReaderFunction<ResultT, ?> batchReaderFunction) {
       Preconditions.checkArgument(
           readerFunction == null ^ batchReaderFunction == null,
           "Exactly one of readerFunction or batchReaderFunction must be provided");
@@ -101,79 +101,74 @@ public final class Vortex {
     }
   }
 
-  public static final class ReadBuilder implements org.apache.iceberg.io.ReadBuilder<ReadBuilder> {
+  public static final class ReadBuilder<F>
+      implements org.apache.iceberg.io.ReadBuilder<ReadBuilder<F>> {
     private final InputFile inputFile;
     private Schema schema;
     private ReaderFunction<?> readerFunction;
-    private BatchReaderFunction<?> batchReaderFunction;
+    private BatchReaderFunction<?, F> batchReaderFunction;
     private Map<Integer, ?> idToConstant;
     private Optional<Expression> filterPredicate = Optional.empty();
+    private F deleteFilter;
 
     ReadBuilder(InputFile inputFile) {
       this.inputFile = inputFile;
     }
 
     @Override
-    public ReadBuilder project(Schema projectedSchema) {
+    public ReadBuilder<F> project(Schema projectedSchema) {
       this.schema = projectedSchema;
       return this;
     }
 
     @Override
-    public ReadBuilder set(String key, String value) {
+    public ReadBuilder<F> set(String key, String value) {
       // TODO(aduffy): support configuring object store credentials here.
       return this;
     }
 
     @Override
-    public ReadBuilder split(long newStart, long newLength) {
+    public ReadBuilder<F> split(long newStart, long newLength) {
       // TODO(aduffy): support splitting? These are in terms of file bytes, which is pretty
       //  annoying.
       return this;
     }
 
     @Override
-    public ReadBuilder filter(Expression newFilter) {
-      // At least print the filter.
+    public ReadBuilder<F> filter(Expression newFilter, boolean _caseSensitive) {
+      // We always treat the filter as case-sensitive.
       this.filterPredicate = Optional.of(newFilter);
       return this;
     }
 
     @Override
-    public ReadBuilder reuseContainers() {
-      // No-op.
-      return this;
-    }
-
-    @Override
-    public ReadBuilder reuseContainers(boolean newReuseContainers) {
+    public ReadBuilder<F> reuseContainers(boolean newReuseContainers) {
       // This is a no-op.
       return this;
     }
 
     @Override
-    public ReadBuilder constantFieldAccessors(Map<Integer, ?> constantFieldAccessors) {
+    public ReadBuilder<F> constantFieldAccessors(Map<Integer, ?> constantFieldAccessors) {
       this.idToConstant = constantFieldAccessors;
       return this;
     }
 
     @Override
-    public ReadBuilder withNameMapping(NameMapping newNameMapping) {
+    public ReadBuilder<F> withNameMapping(NameMapping newNameMapping) {
       // TODO(aduffy): is this for field renames? Figure out how to patch this through.
       return this;
     }
 
-    public <D> ReadBuilder readerFunction(ReaderFunction<D> newReaderFunc) {
-      Preconditions.checkState(
-          readerFunction == null, "Cannot set multiple read builder functions");
+    public <D> ReadBuilder<F> readerFunction(ReaderFunction<D> newReaderFunc) {
+      Preconditions.checkState(readerFunction == null, "Cannot set multiple reader functions");
       this.readerFunction = newReaderFunc;
       return this;
     }
 
-    public <D> ReadBuilder batchReaderFunction(BatchReaderFunction<D> newReaderFunc) {
+    public <D> ReadBuilder<F> batchReaderFunction(BatchReaderFunction<D, F> newReaderFunc) {
       Preconditions.checkState(
           readerFunction == null && batchReaderFunction == null,
-          "Cannot set multiple read builder functions");
+          "Cannot set multiple reader functions");
       this.batchReaderFunction = newReaderFunc;
       return this;
     }
@@ -195,9 +190,17 @@ public final class Vortex {
               ? null
               : fileSchema ->
                   (VortexBatchReader<D>)
-                      batchReaderFunction.batchRead(schema, fileSchema, idToConstant);
+                      batchReaderFunction.batchRead(schema, fileSchema, idToConstant, deleteFilter);
+
+      Preconditions.checkArgument(
+          readerFunc == null || deleteFilter == null,
+          "Delete filter cannot be applied to row-based reader");
 
       return new VortexIterable<>(inputFile, schema, filterPredicate, readerFunc, batchReaderFunc);
+    }
+
+    public void deleteFilter(F deleteFilter) {
+      this.deleteFilter = deleteFilter;
     }
   }
 }
