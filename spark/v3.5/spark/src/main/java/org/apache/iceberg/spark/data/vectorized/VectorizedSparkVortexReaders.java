@@ -26,7 +26,9 @@ import dev.vortex.spark.read.VortexArrowColumnVector;
 import dev.vortex.spark.read.VortexColumnarBatch;
 import java.util.Map;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.data.DeleteFilter;
 import org.apache.iceberg.vortex.VortexBatchReader;
+import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.vectorized.ColumnVector;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
 
@@ -35,8 +37,9 @@ public class VectorizedSparkVortexReaders {
 
   // TODO(aduffy): patch in idToConstant all over the place.
   public static VortexBatchReader<ColumnarBatch> buildReader(
-      Schema icebergSchema, DType vortexSchema, Map<Integer, ?> idToConstant) {
+          Schema icebergSchema, DType vortexSchema, Map<Integer, ?> idToConstant, DeleteFilter<InternalRow> deleteFilter) {
     // TODO(aduffy): schema compat, idToConstant handling.
+    // TODO(aduffy): deleteFilter
     return new SchemaCachingBatchReader();
   }
 

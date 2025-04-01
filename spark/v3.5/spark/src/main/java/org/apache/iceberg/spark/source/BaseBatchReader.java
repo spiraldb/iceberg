@@ -34,6 +34,7 @@ import org.apache.iceberg.spark.OrcBatchReadConf;
 import org.apache.iceberg.spark.ParquetBatchReadConf;
 import org.apache.iceberg.spark.VortexBatchReadConf;
 import org.apache.iceberg.spark.data.vectorized.VectorizedSparkParquetReaders;
+import org.apache.iceberg.vortex.Vortex;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
 
 abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBatch, T> {
@@ -89,10 +90,17 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
     } else if (orcConf != null) {
       readBuilder =
           readBuilder.set(ReadBuilder.RECORDS_PER_BATCH_KEY, String.valueOf(orcConf.batchSize()));
+    } else if (vortexConf != null) {
+        readBuilder =
+            readBuilder.set(ReadBuilder.RECORDS_PER_BATCH_KEY, String.valueOf(vortexConf.batchSize()));
     }
 
     if (readBuilder instanceof Parquet.SupportsDeleteFilter<?>) {
       ((Parquet.SupportsDeleteFilter<SparkDeleteFilter>) readBuilder).deleteFilter(deleteFilter);
+    }
+
+    if (readBuilder instanceof Vortex.ReadBuilder) {
+      ((Vortex.ReadBuilder) readBuilder).deleteFilter(deleteFilter);
     }
 
     return readBuilder.build();
