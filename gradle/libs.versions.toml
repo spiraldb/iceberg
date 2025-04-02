@@ -91,7 +91,7 @@ spark41 = "4.1.1"
 sqlite-jdbc = "3.51.3.0"
 testcontainers = "2.0.4"
 tez08 = { strictly = "0.8.4"}  # see rich version usage explanation above
-vortex = "0.25.2-213-g7508ba4" # todo(aduffy): replace with stable published version
+vortex = "0.26.0-7-gebed2e8" # todo(aduffy): replace with stable published version
 
 [libraries]
 activation = { module = "javax.activation:activation", version.ref = "activation" }
@@ -141,6 +141,7 @@ google-libraries-bom = { module = "com.google.cloud:libraries-bom", version.ref 
 gcs-analytics-core = { module = "com.google.cloud.gcs.analytics:gcs-analytics-core", version.ref = "gcs-analytics-core" }
 guava-guava = { module = "com.google.guava:guava", version.ref = "guava" }
 hadoop3-aws = { module = "org.apache.hadoop:hadoop-aws", version.ref = "hadoop3" }
+hadoop3-azure = { module = "org.apache.hadoop:hadoop-azure", version.ref = "hadoop3" }
 hadoop3-client = { module = "org.apache.hadoop:hadoop-client", version.ref = "hadoop3" }
 hadoop3-common = { module = "org.apache.hadoop:hadoop-common", version.ref = "hadoop3" }
 hadoop3-hdfs = { module = "org.apache.hadoop:hadoop-hdfs", version.ref = "hadoop3" }
