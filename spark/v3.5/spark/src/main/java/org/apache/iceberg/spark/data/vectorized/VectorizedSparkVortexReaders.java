@@ -25,8 +25,10 @@ import dev.vortex.relocated.org.apache.arrow.vector.VectorSchemaRoot;
 import dev.vortex.spark.read.VortexArrowColumnVector;
 import dev.vortex.spark.read.VortexColumnarBatch;
 import java.util.Map;
+import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.DeleteFilter;
+import org.apache.iceberg.util.Pair;
 import org.apache.iceberg.vortex.VortexBatchReader;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.vectorized.ColumnVector;
@@ -39,15 +41,25 @@ public class VectorizedSparkVortexReaders {
   public static VortexBatchReader<ColumnarBatch> buildReader(
           Schema icebergSchema, DType vortexSchema, Map<Integer, ?> idToConstant, DeleteFilter<InternalRow> deleteFilter) {
     // TODO(aduffy): schema compat, idToConstant handling.
-    // TODO(aduffy): deleteFilter
-    return new SchemaCachingBatchReader();
+    return new SchemaCachingBatchReader(deleteFilter);
   }
 
   static final class SchemaCachingBatchReader implements VortexBatchReader<ColumnarBatch> {
     // Reusable vector schema root.
     private VectorSchemaRoot root;
+    private final DeleteFilter<InternalRow> deleteFilter;
+    // TODO(os): we should keep track of start pos from the array, by getting its offset
+    private long rowStartPosInBatch = 0;
+    private boolean hasIsDeletedColumn = false;
+    
+    SchemaCachingBatchReader(DeleteFilter<InternalRow> deleteFilter) {
+      this.deleteFilter = deleteFilter;
+      this.rowStartPosInBatch = 0;
+      if (deleteFilter != null) {
+        this.hasIsDeletedColumn = deleteFilter.requiredSchema().findField(MetadataColumns.IS_DELETED.fieldId()) != null;
 
-    SchemaCachingBatchReader() {}
+      }
+    }
 
     @Override
     public ColumnarBatch read(Array batch) {
@@ -58,8 +70,45 @@ public class VectorizedSparkVortexReaders {
       for (int i = 0; i < this.root.getFieldVectors().size(); ++i) {
         vectors[i] = new VortexArrowColumnVector(this.root.getFieldVectors().get(i));
       }
+      
+      // Create the batch first
+      ColumnarBatch columnarBatch = new VortexColumnarBatch(batch, vectors, rowCount);
+      
+      if (deleteFilter != null) {
+        if (hasIsDeletedColumn) {
+          boolean[] isDeleted = ColumnarBatchUtil.buildIsDeleted(vectors, deleteFilter, rowStartPosInBatch, rowCount);
+          for (ColumnVector vector : vectors) {
+            if (vector instanceof DeletedColumnVector) {
+              ((DeletedColumnVector) vector).setValue(isDeleted);
+            }
+          }
+        } else {
+          Pair<int[], Integer> pair =
+              ColumnarBatchUtil.buildRowIdMapping(vectors, deleteFilter, rowStartPosInBatch, rowCount);
+          
+          if (pair != null) {
+            // Some rows were deleted, create a filtered batch
+            int[] rowIdMapping = pair.first();
+            int numLiveRows = pair.second();
+            
+            ColumnVector[] filteredVectors = new ColumnVector[vectors.length];
+            for (int i = 0; i < vectors.length; i++) {
+              filteredVectors[i] = new ColumnVectorWithFilter(vectors[i], rowIdMapping);
+            }
+            
+            // Remove any extra columns that were only needed for equality deletes
+            if (deleteFilter.hasEqDeletes()) {
+              filteredVectors = ColumnarBatchUtil.removeExtraColumns(deleteFilter, filteredVectors);
+            }
+            
+            columnarBatch = new ColumnarBatch(filteredVectors);
+            columnarBatch.setNumRows(numLiveRows);
+          }
+        }
+      }
 
-      return new VortexColumnarBatch(batch, vectors, rowCount);
+      rowStartPosInBatch += rowCount;
+      return columnarBatch;
     }
   }
 }
