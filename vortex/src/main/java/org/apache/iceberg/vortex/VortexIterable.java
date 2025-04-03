@@ -38,6 +38,7 @@ import org.apache.iceberg.io.CloseableGroup;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.io.InputFile;
+import org.apache.iceberg.data.DeleteFilter;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Types;
@@ -49,6 +50,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
   private final InputFile inputFile;
   private final Optional<Expression> filterPredicate;
+  private final Optional<DeleteFilter<?>> deleteFilter;
   private final Function<DType, VortexRowReader<T>> rowReaderFunc;
   private final Function<DType, VortexBatchReader<T>> batchReaderFunction;
   private final List<String> projection;
@@ -57,12 +59,14 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
       InputFile inputFile,
       Schema icebergSchema,
       Optional<Expression> filterPredicate,
+      Optional<DeleteFilter<?>> deleteFilter,
       Function<DType, VortexRowReader<T>> readerFunction,
       Function<DType, VortexBatchReader<T>> batchReaderFunction) {
     this.inputFile = inputFile;
     // We have the file schema, we need to assign Iceberg IDs to the entire file schema
     this.projection = Lists.transform(icebergSchema.columns(), Types.NestedField::name);
     this.filterPredicate = filterPredicate;
+    this.deleteFilter = deleteFilter;
     this.rowReaderFunc = readerFunction;
     this.batchReaderFunction = batchReaderFunction;
   }
@@ -79,6 +83,15 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
               Schema fileSchema = VortexSchemas.convert(vortexFile.getDType());
               return ConvertFilterToVortex.convert(fileSchema, icebergExpression);
             });
+
+    if (deleteFilter.isPresent()) {
+      DeleteFilter<?> deletes = deleteFilter.get();
+      deletes.deletedRowPositions()
+
+      // TODO: get row_indices from each deleted position.
+      //
+      deletes.deletedRowPositions().forEach(..);
+    }
 
     ArrayStream batchStream =
         vortexFile.newScan(
