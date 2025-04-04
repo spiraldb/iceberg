@@ -201,7 +201,7 @@ public final class Vortex {
     }
 
     public void deleteFilter(DeleteFilter<?> deleteFilter) {
-      this.deleteFilter = Optional.of(deleteFilter);
+      this.deleteFilter = Optional.ofNullable(deleteFilter);
     }
   }
 }

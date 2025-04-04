@@ -20,9 +20,11 @@ package org.apache.iceberg.deletes;
 
 import java.nio.ByteBuffer;
 import java.util.Collection;
+import java.util.Optional;
 import java.util.function.LongConsumer;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
+import org.apache.iceberg.util.Pair;
 
 public interface PositionDeleteIndex {
   /**
@@ -111,6 +113,10 @@ public interface PositionDeleteIndex {
    */
   static PositionDeleteIndex deserialize(byte[] bytes, DeleteFile deleteFile) {
     return BitmapPositionDeleteIndex.deserialize(bytes, deleteFile);
+  }
+
+  static Pair<Integer, Integer> bitmapOffsetAndLength(byte[] bytes, DeleteFile deleteFile) {
+    return BitmapPositionDeleteIndex.bitmapOffsetAndLength(bytes, deleteFile);
   }
 
   /** Returns an empty immutable position delete index. */

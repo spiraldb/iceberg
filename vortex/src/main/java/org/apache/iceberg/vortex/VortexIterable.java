@@ -23,15 +23,19 @@ import dev.vortex.api.ArrayStream;
 import dev.vortex.api.DType;
 import dev.vortex.api.File;
 import dev.vortex.api.Files;
+import dev.vortex.api.ImmutableSerializedBitmap;
 import dev.vortex.api.ScanOptions;
+import dev.vortex.api.SerializedBitmap;
 import java.io.IOException;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
+import net.jcip.annotations.Immutable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.data.ByteSlice;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.hadoop.HadoopInputFile;
 import org.apache.iceberg.io.CloseableGroup;
@@ -46,204 +50,198 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class VortexIterable<T> extends CloseableGroup implements CloseableIterable<T> {
-  private static final Logger LOG = LoggerFactory.getLogger(VortexIterable.class);
+    private static final Logger LOG = LoggerFactory.getLogger(VortexIterable.class);
 
-  private final InputFile inputFile;
-  private final Optional<Expression> filterPredicate;
-  private final Optional<DeleteFilter<?>> deleteFilter;
-  private final Function<DType, VortexRowReader<T>> rowReaderFunc;
-  private final Function<DType, VortexBatchReader<T>> batchReaderFunction;
-  private final List<String> projection;
+    private final InputFile inputFile;
+    private final Optional<Expression> filterPredicate;
+    private final Optional<DeleteFilter<?>> deleteFilter;
+    private final Function<DType, VortexRowReader<T>> rowReaderFunc;
+    private final Function<DType, VortexBatchReader<T>> batchReaderFunction;
+    private final List<String> projection;
 
-  VortexIterable(
-      InputFile inputFile,
-      Schema icebergSchema,
-      Optional<Expression> filterPredicate,
-      Optional<DeleteFilter<?>> deleteFilter,
-      Function<DType, VortexRowReader<T>> readerFunction,
-      Function<DType, VortexBatchReader<T>> batchReaderFunction) {
-    this.inputFile = inputFile;
-    // We have the file schema, we need to assign Iceberg IDs to the entire file schema
-    this.projection = Lists.transform(icebergSchema.columns(), Types.NestedField::name);
-    this.filterPredicate = filterPredicate;
-    this.deleteFilter = deleteFilter;
-    this.rowReaderFunc = readerFunction;
-    this.batchReaderFunction = batchReaderFunction;
-  }
-
-  @Override
-  public CloseableIterator<T> iterator() {
-    File vortexFile = newVortexFile(inputFile);
-    addCloseable(vortexFile);
-
-    // Return the filtered scan, and then the projection, etc.
-    Optional<dev.vortex.api.Expression> scanPredicate =
-        filterPredicate.map(
-            icebergExpression -> {
-              Schema fileSchema = VortexSchemas.convert(vortexFile.getDType());
-              return ConvertFilterToVortex.convert(fileSchema, icebergExpression);
-            });
-
-    if (deleteFilter.isPresent()) {
-      DeleteFilter<?> deletes = deleteFilter.get();
-      deletes.deletedRowPositions()
-
-      // TODO: get row_indices from each deleted position.
-      //
-      deletes.deletedRowPositions().forEach(..);
-    }
-
-    ArrayStream batchStream =
-        vortexFile.newScan(
-            ScanOptions.builder().addAllColumns(projection).predicate(scanPredicate).build());
-    Preconditions.checkNotNull(batchStream, "batchStream");
-
-    if (rowReaderFunc != null) {
-      VortexRowReader<T> rowFunction = rowReaderFunc.apply(batchStream.getDataType());
-      return new VortexRowIterator<>(batchStream, rowFunction);
-    } else {
-      VortexBatchReader<T> batchTransform = batchReaderFunction.apply(batchStream.getDataType());
-      PrefetchingIterator<Array> iter =
-          new PrefetchingIterator<>(batchStream, 16 * 1024 * 1024, Array::nbytes);
-      CloseableIterator<Array> batchIterator = new VortexBatchIterator(iter);
-      return CloseableIterator.transform(batchIterator, batchTransform::read);
-    }
-  }
-
-  private static File newVortexFile(InputFile inputFile) {
-    Preconditions.checkArgument(
-        inputFile instanceof HadoopInputFile, "Vortex only supports HadoopInputFile currently");
-    LOG.debug("opening Vortex file: {}", inputFile);
-
-    HadoopInputFile hadoopInputFile = (HadoopInputFile) inputFile;
-    URI path = hadoopInputFile.getPath().toUri();
-    switch (path.getScheme()) {
-      case "s3a":
-        return Files.open(path, s3PropertiesFromHadoopConf(hadoopInputFile.getConf()));
-      case "file":
-        return Files.open(path, Map.of());
-      default:
-        // TODO(aduffy): add support for Azure
-        throw new IllegalArgumentException("Unsupported scheme: " + path.getScheme());
-    }
-  }
-
-  static final String FS_S3A_ACCESS_KEY = "fs.s3a.access.key";
-  static final String FS_S3A_SECRET_KEY = "fs.s3a.secret.key";
-  static final String FS_S3A_SESSION_TOKEN = "fs.s3a.session.token";
-  static final String FS_S3A_ENDPOINT = "fs.s3a.endpoint";
-  static final String FS_S3A_ENDPOINT_REGION = "fs.s3a.endpoint.region";
-
-  private static Map<String, String> s3PropertiesFromHadoopConf(Configuration hadoopConf) {
-    VortexS3Properties properties = new VortexS3Properties();
-
-    for (Map.Entry<String, String> entry : hadoopConf) {
-      switch (entry.getKey()) {
-        case FS_S3A_ACCESS_KEY:
-          properties.setAccessKeyId(entry.getValue());
-          break;
-        case FS_S3A_SECRET_KEY:
-          properties.setSecretAccessKey(entry.getValue());
-          break;
-        case FS_S3A_SESSION_TOKEN:
-          properties.setSessionToken(entry.getValue());
-          break;
-        case FS_S3A_ENDPOINT:
-          String qualified = entry.getValue();
-          if (!qualified.startsWith("http")) {
-            qualified = "https://" + qualified;
-          }
-          properties.setEndpoint(qualified);
-          break;
-        case FS_S3A_ENDPOINT_REGION:
-          properties.setRegion(entry.getValue());
-          break;
-        default:
-          LOG.trace(
-              "Ignoring unknown s3a connector property: {}={}", entry.getKey(), entry.getValue());
-          break;
-      }
-    }
-
-    return properties.asProperties();
-  }
-
-  static class VortexBatchIterator implements CloseableIterator<Array> {
-    private PrefetchingIterator<Array> stream;
-
-    private VortexBatchIterator(PrefetchingIterator<Array> stream) {
-      this.stream = stream;
+    VortexIterable(
+            InputFile inputFile,
+            Schema icebergSchema,
+            Optional<Expression> filterPredicate,
+            Optional<DeleteFilter<?>> deleteFilter,
+            Function<DType, VortexRowReader<T>> readerFunction,
+            Function<DType, VortexBatchReader<T>> batchReaderFunction) {
+        this.inputFile = inputFile;
+        // We have the file schema, we need to assign Iceberg IDs to the entire file schema
+        this.projection = Lists.transform(icebergSchema.columns(), Types.NestedField::name);
+        this.filterPredicate = filterPredicate;
+        this.deleteFilter = deleteFilter;
+        this.rowReaderFunc = readerFunction;
+        this.batchReaderFunction = batchReaderFunction;
     }
 
     @Override
-    public Array next() {
-      return stream.next();
+    public CloseableIterator<T> iterator() {
+        File vortexFile = newVortexFile(inputFile);
+        addCloseable(vortexFile);
+
+        // Return the filtered scan, and then the projection, etc.
+        Optional<dev.vortex.api.Expression> scanPredicate =
+                filterPredicate.map(
+                        icebergExpression -> {
+                            Schema fileSchema = VortexSchemas.convert(vortexFile.getDType());
+                            return ConvertFilterToVortex.convert(fileSchema, icebergExpression);
+                        });
+
+        Optional<SerializedBitmap> serializedBitmap = deleteFilter.flatMap(DeleteFilter::bitmapBytes)
+                .map(bitmapBytes -> ImmutableSerializedBitmap.of(bitmapBytes.getBytes(), bitmapBytes.getOffset(), bitmapBytes.getLength(), false));
+
+        ArrayStream batchStream =
+                vortexFile.newScan(
+                        ScanOptions.builder().addAllColumns(projection).predicate(scanPredicate).selectionBitmap(serializedBitmap).build());
+        Preconditions.checkNotNull(batchStream, "batchStream");
+
+        if (rowReaderFunc != null) {
+            VortexRowReader<T> rowFunction = rowReaderFunc.apply(batchStream.getDataType());
+            return new VortexRowIterator<>(batchStream, rowFunction);
+        } else {
+            VortexBatchReader<T> batchTransform = batchReaderFunction.apply(batchStream.getDataType());
+            PrefetchingIterator<Array> iter =
+                    new PrefetchingIterator<>(batchStream, 16 * 1024 * 1024, Array::nbytes);
+            CloseableIterator<Array> batchIterator = new VortexBatchIterator(iter);
+            return CloseableIterator.transform(batchIterator, batchTransform::read);
+        }
     }
 
-    @Override
-    public boolean hasNext() {
-      return stream.hasNext();
+    private static File newVortexFile(InputFile inputFile) {
+        Preconditions.checkArgument(
+                inputFile instanceof HadoopInputFile, "Vortex only supports HadoopInputFile currently");
+        LOG.debug("opening Vortex file: {}", inputFile);
+
+        HadoopInputFile hadoopInputFile = (HadoopInputFile) inputFile;
+        URI path = hadoopInputFile.getPath().toUri();
+        switch (path.getScheme()) {
+            case "s3a":
+                return Files.open(path, s3PropertiesFromHadoopConf(hadoopInputFile.getConf()));
+            case "file":
+                return Files.open(path, Map.of());
+            default:
+                // TODO(aduffy): add support for Azure
+                throw new IllegalArgumentException("Unsupported scheme: " + path.getScheme());
+        }
     }
 
-    @Override
-    public void close() {
-      if (stream != null) {
-        stream.close();
-      }
-      stream = null;
-    }
-  }
+    static final String FS_S3A_ACCESS_KEY = "fs.s3a.access.key";
+    static final String FS_S3A_SECRET_KEY = "fs.s3a.secret.key";
+    static final String FS_S3A_SESSION_TOKEN = "fs.s3a.session.token";
+    static final String FS_S3A_ENDPOINT = "fs.s3a.endpoint";
+    static final String FS_S3A_ENDPOINT_REGION = "fs.s3a.endpoint.region";
 
-  static class VortexRowIterator<T> implements CloseableIterator<T> {
-    private final ArrayStream stream;
-    private final VortexRowReader<T> rowReader;
+    private static Map<String, String> s3PropertiesFromHadoopConf(Configuration hadoopConf) {
+        VortexS3Properties properties = new VortexS3Properties();
 
-    private Array currentBatch = null;
-    private int batchIndex = 0;
-    private int batchLen = 0;
+        for (Map.Entry<String, String> entry : hadoopConf) {
+            switch (entry.getKey()) {
+                case FS_S3A_ACCESS_KEY:
+                    properties.setAccessKeyId(entry.getValue());
+                    break;
+                case FS_S3A_SECRET_KEY:
+                    properties.setSecretAccessKey(entry.getValue());
+                    break;
+                case FS_S3A_SESSION_TOKEN:
+                    properties.setSessionToken(entry.getValue());
+                    break;
+                case FS_S3A_ENDPOINT:
+                    String qualified = entry.getValue();
+                    if (!qualified.startsWith("http")) {
+                        qualified = "https://" + qualified;
+                    }
+                    properties.setEndpoint(qualified);
+                    break;
+                case FS_S3A_ENDPOINT_REGION:
+                    properties.setRegion(entry.getValue());
+                    break;
+                default:
+                    LOG.trace(
+                            "Ignoring unknown s3a connector property: {}={}", entry.getKey(), entry.getValue());
+                    break;
+            }
+        }
 
-    VortexRowIterator(ArrayStream stream, VortexRowReader<T> rowReader) {
-      this.stream = stream;
-      this.rowReader = rowReader;
-      if (stream.hasNext()) {
-        currentBatch = stream.next();
-        batchLen = (int) currentBatch.getLen();
-      }
-    }
-
-    @Override
-    public void close() throws IOException {
-      // Do not close the ArrayStream, it is closed by the parent.
-      currentBatch.close();
-      currentBatch = null;
-    }
-
-    @Override
-    public boolean hasNext() {
-      // See if we need to fill a new batch first.
-      if (currentBatch == null || batchIndex == batchLen) {
-        advance();
-      }
-
-      return currentBatch != null;
+        return properties.asProperties();
     }
 
-    @Override
-    public T next() {
-      T nextRow = rowReader.read(currentBatch, batchIndex);
-      batchIndex++;
-      return nextRow;
+    static class VortexBatchIterator implements CloseableIterator<Array> {
+        private PrefetchingIterator<Array> stream;
+
+        private VortexBatchIterator(PrefetchingIterator<Array> stream) {
+            this.stream = stream;
+        }
+
+        @Override
+        public Array next() {
+            return stream.next();
+        }
+
+        @Override
+        public boolean hasNext() {
+            return stream.hasNext();
+        }
+
+        @Override
+        public void close() {
+            if (stream != null) {
+                stream.close();
+            }
+            stream = null;
+        }
     }
 
-    private void advance() {
-      if (stream.hasNext()) {
-        currentBatch = stream.next();
-        batchIndex = 0;
-        batchLen = (int) currentBatch.getLen();
-      } else {
-        currentBatch = null;
-        batchLen = 0;
-      }
+    static class VortexRowIterator<T> implements CloseableIterator<T> {
+        private final ArrayStream stream;
+        private final VortexRowReader<T> rowReader;
+
+        private Array currentBatch = null;
+        private int batchIndex = 0;
+        private int batchLen = 0;
+
+        VortexRowIterator(ArrayStream stream, VortexRowReader<T> rowReader) {
+            this.stream = stream;
+            this.rowReader = rowReader;
+            if (stream.hasNext()) {
+                currentBatch = stream.next();
+                batchLen = (int) currentBatch.getLen();
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            // Do not close the ArrayStream, it is closed by the parent.
+            currentBatch.close();
+            currentBatch = null;
+        }
+
+        @Override
+        public boolean hasNext() {
+            // See if we need to fill a new batch first.
+            if (currentBatch == null || batchIndex == batchLen) {
+                advance();
+            }
+
+            return currentBatch != null;
+        }
+
+        @Override
+        public T next() {
+            T nextRow = rowReader.read(currentBatch, batchIndex);
+            batchIndex++;
+            return nextRow;
+        }
+
+        private void advance() {
+            if (stream.hasNext()) {
+                currentBatch = stream.next();
+                batchIndex = 0;
+                batchLen = (int) currentBatch.getLen();
+            } else {
+                currentBatch = null;
+                batchLen = 0;
+            }
+        }
     }
-  }
 }

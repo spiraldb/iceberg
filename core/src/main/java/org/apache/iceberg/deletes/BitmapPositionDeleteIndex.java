@@ -27,6 +27,7 @@ import java.util.zip.CRC32;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.util.Pair;
 
 class BitmapPositionDeleteIndex implements PositionDeleteIndex {
   private static final int LENGTH_SIZE_BYTES = 4;
@@ -152,6 +153,16 @@ class BitmapPositionDeleteIndex implements PositionDeleteIndex {
     int expectedCrc = buffer.getInt(crcOffset);
     Preconditions.checkArgument(crc == expectedCrc, "Invalid CRC");
     return new BitmapPositionDeleteIndex(bitmap, deleteFile);
+  }
+
+  public static Pair<Integer, Integer> bitmapOffsetAndLength(byte[] bytes, DeleteFile deleteFile) {
+    ByteBuffer buffer = ByteBuffer.wrap(bytes);
+    int bitmapDataLength = readBitmapDataLength(buffer, deleteFile);
+    int crc = computeChecksum(bytes, bitmapDataLength);
+    int crcOffset = LENGTH_SIZE_BYTES + bitmapDataLength;
+    int expectedCrc = buffer.getInt(crcOffset);
+    Preconditions.checkArgument(crc == expectedCrc, "Invalid CRC");
+    return Pair.of(BITMAP_DATA_OFFSET, bitmapDataLength);
   }
 
   // computes and validates the length of the bitmap data (magic bytes + bitmap)
