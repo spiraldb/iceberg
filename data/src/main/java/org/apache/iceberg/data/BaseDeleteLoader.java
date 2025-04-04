@@ -20,6 +20,7 @@ package org.apache.iceberg.data;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -48,6 +49,7 @@ import org.apache.iceberg.relocated.com.google.common.math.LongMath;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.util.CharSequenceMap;
 import org.apache.iceberg.util.ContentFileUtil;
+import org.apache.iceberg.util.Pair;
 import org.apache.iceberg.util.StructLikeSet;
 import org.apache.iceberg.util.Tasks;
 import org.apache.iceberg.util.ThreadPools;
@@ -169,6 +171,17 @@ public class BaseDeleteLoader implements DeleteLoader {
     }
   }
 
+  public Optional<ByteSlice> loadBitmapBytes(
+          Iterable<DeleteFile> deleteFiles, CharSequence filePath
+  ) {
+    if (!ContentFileUtil.containsSingleDV(deleteFiles)) {
+      return Optional.empty();
+    }
+    DeleteFile dv = Iterables.getOnlyElement(deleteFiles);
+    validateDV(dv, filePath);
+    return Optional.of(readDVBytes(dv));
+  }
+
   private PositionDeleteIndex readDV(DeleteFile dv) {
     LOG.trace("Opening DV file {}", dv.location());
     InputFile inputFile = loadInputFile.apply(dv);
@@ -176,6 +189,16 @@ public class BaseDeleteLoader implements DeleteLoader {
     int length = dv.contentSizeInBytes().intValue();
     byte[] bytes = readBytes(inputFile, offset, length);
     return PositionDeleteIndex.deserialize(bytes, dv);
+  }
+
+  private ByteSlice readDVBytes(DeleteFile dv) {
+      LOG.trace("Opening DV file without deserialising {}", dv.location());
+      InputFile inputFile = loadInputFile.apply(dv);
+      long offset = dv.contentOffset();
+      int length = dv.contentSizeInBytes().intValue();
+      byte[] bytes = readBytes(inputFile, offset, length);
+      Pair<Integer, Integer> offsetAndLength = PositionDeleteIndex.bitmapOffsetAndLength(bytes, dv);
+      return new ByteSlice(bytes, offsetAndLength.first(), offsetAndLength.second());
   }
 
   private PositionDeleteIndex getOrReadPosDeletes(

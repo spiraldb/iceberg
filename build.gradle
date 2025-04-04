@@ -834,6 +834,7 @@ project(':iceberg-vortex') {
     api project(':iceberg-api')
     implementation project(':iceberg-core')
     implementation project(':iceberg-common')
+    implementation project(':iceberg-data')
     implementation(libs.vortex.jni)
 
     annotationProcessor libs.immutables.value
