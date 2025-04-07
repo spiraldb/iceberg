@@ -21,6 +21,7 @@ package org.apache.iceberg.data;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
 import org.apache.iceberg.Accessor;
@@ -205,6 +206,7 @@ public abstract class DeleteFilter<T> {
       StructProjection projectRow = StructProjection.create(requiredSchema, deleteSchema);
 
       StructLikeSet deleteSet = deleteLoader().loadEqualityDeletes(deletes, deleteSchema);
+      // TODO(osatici): extract iceberg expressions here from the deleteSet
       Predicate<T> isInDeleteSet =
           record -> deleteSet.contains(projectRow.wrap(asStructLike(record)));
       isInDeleteSets.add(isInDeleteSet);
@@ -239,11 +241,20 @@ public abstract class DeleteFilter<T> {
     return eqDeleteRows;
   }
 
+  public Optional<ByteSlice> bitmapBytes() {
+    if (posDeletes.isEmpty()) {
+      return Optional.empty();
+    }
+    return ((BaseDeleteLoader) deleteLoader()).loadBitmapBytes(posDeletes, filePath);
+
+  }
+
   public PositionDeleteIndex deletedRowPositions() {
     if (deleteRowPositions == null && !posDeletes.isEmpty()) {
       this.deleteRowPositions = deleteLoader().loadPositionDeletes(posDeletes, filePath);
     }
 
+    // TODO(osatici): call this, cast this to bitmap, get the underlying bitmap
     return deleteRowPositions;
   }
 

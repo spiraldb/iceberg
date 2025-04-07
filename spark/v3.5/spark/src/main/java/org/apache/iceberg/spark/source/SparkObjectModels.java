@@ -22,6 +22,7 @@ import static org.apache.iceberg.MetadataColumns.DELETE_FILE_ROW_FIELD_NAME;
 
 import dev.vortex.api.DType;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.avro.Avro;
 import org.apache.iceberg.data.DeleteFilter;
@@ -91,12 +92,12 @@ public class SparkObjectModels {
             (Schema icebergSchema,
                 DType vortexSchema,
                 Map<Integer, ?> idToConstant,
-                Object deleteFilter) ->
+                Optional<DeleteFilter<?>> deleteFilter) ->
                 VectorizedSparkVortexReaders.buildReader(
                     icebergSchema,
                     vortexSchema,
                     idToConstant,
-                    (DeleteFilter<InternalRow>) deleteFilter)));
+                    (Optional<DeleteFilter<?>>) deleteFilter)));
   }
 
   private SparkObjectModels() {}

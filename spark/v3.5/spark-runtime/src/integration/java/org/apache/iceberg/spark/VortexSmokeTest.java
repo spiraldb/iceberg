@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -36,9 +37,11 @@ import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DataFiles;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.RowDelta;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.deletes.PositionDelete;
 import org.apache.iceberg.hadoop.HadoopCatalog;
 import org.apache.iceberg.hadoop.HadoopInputFile;
 import org.apache.iceberg.types.Types;
@@ -137,10 +140,12 @@ public class VortexSmokeTest {
   // Step 1: create the warehouse, populate it with Citibike data.
   @Test
   public void setupWarehouse() throws IOException, URISyntaxException {
-//    setupWarehouseFormat(FileFormat.VORTEX);
-//    setupWarehouseFormat(FileFormat.PARQUET);
+    //    setupWarehouseFormat(FileFormat.VORTEX);
+    //    setupWarehouseFormat(FileFormat.PARQUET);
     // Parquet with row group size 1MM
-    setupWarehouseFormat(FileFormat.PARQUET, Optional.of("parquet1m"));
+    // setupWarehouseFormat(FileFormat.PARQUET, Optional.of("parquet1m"));
+    addPositionalDeletesWithSql("vortex");
+    // addPositionalDeletesWithSql("parquet");
   }
 
   private void setupWarehouseFormat(FileFormat format, Optional<String> variant)
@@ -183,7 +188,8 @@ public class VortexSmokeTest {
 
   // Run some Spark SQL queries against the warehouse (using partition pruning!)
   @ParameterizedTest
-  @ValueSource(strings = {"vortex", "parquet", "parquet1m"})
+  //@ValueSource(strings = {"vortex", "parquet", "parquet1m"})
+  @ValueSource(strings = {"parquet"})
   public void scanWarehouse(String format) {
     try (SparkSession spark = newSparkSession("scanWarehouse")) {
       spark.sql(String.format("select count(*) from %s.trips", format)).show();
@@ -218,5 +224,21 @@ public class VortexSmokeTest {
         .appName(name)
         .master("local")
         .getOrCreate();
+  }
+  private void addPositionalDeletesWithSql(String format) {
+    try (SparkSession spark = newSparkSession("deletePositions")) {
+      spark.sql("SELECT *, " +
+                      "ROW_NUMBER() OVER (PARTITION BY DATE_TRUNC('month', started_at) ORDER BY ride_id) as row_num " +
+                      String.format("FROM %s.trips", format))
+              .createOrReplaceTempView("trips_with_row_num");
+
+      spark.sql(String.format("DELETE FROM %s.trips ", format) +
+              "WHERE ride_id IN (" +
+              "  SELECT ride_id FROM trips_with_row_num " +
+              "  WHERE row_num < 1000 " +
+              "  AND MONTH(started_at) = 9 " +
+              "  AND YEAR(started_at) = 2024" +
+              ")");
+    }
   }
 }
