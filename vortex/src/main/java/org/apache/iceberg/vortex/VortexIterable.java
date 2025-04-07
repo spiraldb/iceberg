@@ -99,12 +99,12 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
      // remove _file column if it is pushed down to us, it should be added back in from the Reader
      // TODO(os): remove all constant metadata columns
-     List<String> projection_without_file = projection.stream().filter(col -> !col.equals(MetadataColumns.FILE_PATH.name())).collect(Collectors.toList());
+     List<String> projection_without_file_and_pos = projection.stream().filter(col -> !col.equals(MetadataColumns.FILE_PATH.name()) && !col.equals(MetadataColumns.ROW_POSITION.name())).collect(Collectors.toList());
 
     ArrayStream batchStream =
         vortexFile.newScan(
             ScanOptions.builder()
-                .addAllColumns(projection_without_file)
+                .addAllColumns(projection_without_file_and_pos)
                 .predicate(scanPredicate)
                 .rowRange(rowRange)
                 .selectionBitmap(serializedBitmap)
