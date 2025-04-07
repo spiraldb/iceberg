@@ -66,8 +66,8 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
       InputFile inputFile,
       Schema icebergSchema,
       Optional<Expression> filterPredicate,
-      Optional<DeleteFilter> deleteFilter,
       long[] rowRange,
+      Optional<DeleteFilter<?>> deleteFilter,
       Function<DType, VortexRowReader<T>> readerFunction,
       Function<DType, VortexBatchReader<T>> batchReaderFunction) {
     this.inputFile = inputFile;
@@ -206,84 +206,17 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     return properties.asProperties();
   }
 
-  static class VortexRowIterator<T> extends CloseableGroup implements CloseableIterator<T> {
-    private final CloseableIterator<Array> stream;
-    private final VortexRowReader<T> rowReader;
-
-        for (Map.Entry<String, String> entry : hadoopConf) {
-            switch (entry.getKey()) {
-                case FS_S3A_ACCESS_KEY:
-                    properties.setAccessKeyId(entry.getValue());
-                    break;
-                case FS_S3A_SECRET_KEY:
-                    properties.setSecretAccessKey(entry.getValue());
-                    break;
-                case FS_S3A_SESSION_TOKEN:
-                    properties.setSessionToken(entry.getValue());
-                    break;
-                case FS_S3A_ENDPOINT:
-                    String qualified = entry.getValue();
-                    if (!qualified.startsWith("http")) {
-                        qualified = "https://" + qualified;
-                    }
-                    properties.setEndpoint(qualified);
-                    break;
-                case FS_S3A_ENDPOINT_REGION:
-                    properties.setRegion(entry.getValue());
-                    break;
-                default:
-                    LOG.trace(
-                            "Ignoring unknown s3a connector property: {}={}", entry.getKey(), entry.getValue());
-                    break;
-            }
-        }
-
-    VortexRowIterator(CloseableIterator<Array> stream, VortexRowReader<T> rowReader) {
-      this.stream = stream;
-      addCloseable(stream);
-      this.rowReader = rowReader;
-      if (stream.hasNext()) {
-        currentBatch = stream.next();
-        batchLen = (int) currentBatch.getLen();
-      }
-    }
-
-    static class VortexBatchIterator implements CloseableIterator<Array> {
-        private PrefetchingIterator<Array> stream;
-
-        private VortexBatchIterator(PrefetchingIterator<Array> stream) {
-            this.stream = stream;
-        }
-
-        @Override
-        public Array next() {
-            return stream.next();
-        }
-
-        @Override
-        public boolean hasNext() {
-            return stream.hasNext();
-        }
-
-        @Override
-        public void close() {
-            if (stream != null) {
-                stream.close();
-            }
-            stream = null;
-        }
-    }
-
-    static class VortexRowIterator<T> implements CloseableIterator<T> {
-        private final ArrayStream stream;
+    static class VortexRowIterator<T> extends CloseableGroup implements CloseableIterator<T> {
+        private final CloseableIterator<Array> stream;
         private final VortexRowReader<T> rowReader;
 
         private Array currentBatch = null;
         private int batchIndex = 0;
         private int batchLen = 0;
 
-        VortexRowIterator(ArrayStream stream, VortexRowReader<T> rowReader) {
+        VortexRowIterator(CloseableIterator<Array> stream, VortexRowReader<T> rowReader) {
             this.stream = stream;
+            addCloseable(stream);
             this.rowReader = rowReader;
             if (stream.hasNext()) {
                 currentBatch = stream.next();
