@@ -97,8 +97,9 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     Optional<SerializedBitmap> serializedBitmap = deleteFilter.flatMap(DeleteFilter::bitmapBytes)
             .map(bitmapBytes -> ImmutableSerializedBitmap.of(bitmapBytes.getBytes(), bitmapBytes.getOffset(), bitmapBytes.getLength(), false));
 
-    // remove _file column if it is pushed down to us, it should be added back in from the Reader
-    List<String> projection_without_file = projection.stream().filter(col -> !col.equals(MetadataColumns.FILE_PATH.name())).collect(Collectors.toList());
+     // remove _file column if it is pushed down to us, it should be added back in from the Reader
+     // TODO(os): remove all constant metadata columns
+     List<String> projection_without_file = projection.stream().filter(col -> !col.equals(MetadataColumns.FILE_PATH.name())).collect(Collectors.toList());
 
     ArrayStream batchStream =
         vortexFile.newScan(

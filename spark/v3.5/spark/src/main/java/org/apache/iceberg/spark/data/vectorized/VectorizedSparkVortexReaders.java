@@ -28,8 +28,9 @@ import java.util.Map;
 import java.util.Optional;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.DeleteFilter;
+import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.Types;
 import org.apache.iceberg.vortex.VortexBatchReader;
-import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.vectorized.ColumnVector;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
 
@@ -42,23 +43,38 @@ public class VectorizedSparkVortexReaders {
     // TODO(aduffy): schema compat, idToConstant handling.
     // TODO(aduffy): deleteFilter
     // TODO(os): we know we only get DeleteFilter<InternalRow>, cast here or more generics
-    return new SchemaCachingBatchReader();
+    return new SchemaCachingBatchReader(icebergSchema, idToConstant);
   }
 
   static final class SchemaCachingBatchReader implements VortexBatchReader<ColumnarBatch> {
-    // Reusable vector schema root.
+      private final Schema icebergSchema;
+      private final Map<Integer, ?> idToConstant;
+      // Reusable vector schema root.
     private VectorSchemaRoot root;
 
-    SchemaCachingBatchReader() {}
+    SchemaCachingBatchReader(Schema icebergSchema, Map<Integer, ?> idToConstant) {
+        this.icebergSchema = icebergSchema;
+        this.idToConstant = idToConstant;
+    }
 
     @Override
     public ColumnarBatch read(Array batch) {
       this.root = batch.exportToArrow(ArrowAllocation.rootAllocator(), this.root);
       int rowCount = this.root.getRowCount();
-      ColumnVector[] vectors = new ColumnVector[this.root.getFieldVectors().size()];
+      ColumnVector[] vectors = new ColumnVector[this.icebergSchema.columns().size()];
 
+      // fill vortex columns
       for (int i = 0; i < this.root.getFieldVectors().size(); ++i) {
         vectors[i] = new VortexArrowColumnVector(this.root.getFieldVectors().get(i));
+      }
+
+      // fill constant metadata columns
+      for (int i = this.root.getFieldVectors().size(); i < this.icebergSchema.columns().size(); ++i) {
+        // assuming all metadata columns come after data columns
+        Types.NestedField field = icebergSchema.columns().get(i);
+        Object constantValue = idToConstant.get(field.fieldId());
+        vectors[i] = new ConstantColumnVector(field.type(), rowCount, constantValue);
+
       }
 
       return new VortexColumnarBatch(batch, vectors, rowCount);
