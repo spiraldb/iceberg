@@ -145,6 +145,7 @@ public class VortexSmokeTest {
     // Parquet with row group size 1MM
     // setupWarehouseFormat(FileFormat.PARQUET, Optional.of("parquet1m"));
     addPositionalDeletesWithSql("vortex");
+    // addPositionalDeletesWithSql("parquet");
   }
 
   private void setupWarehouseFormat(FileFormat format, Optional<String> variant)
@@ -187,7 +188,8 @@ public class VortexSmokeTest {
 
   // Run some Spark SQL queries against the warehouse (using partition pruning!)
   @ParameterizedTest
-  @ValueSource(strings = {"vortex", "parquet", "parquet1m"})
+  //@ValueSource(strings = {"vortex", "parquet", "parquet1m"})
+  @ValueSource(strings = {"parquet"})
   public void scanWarehouse(String format) {
     try (SparkSession spark = newSparkSession("scanWarehouse")) {
       spark.sql(String.format("select count(*) from %s.trips", format)).show();

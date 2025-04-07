@@ -19,10 +19,12 @@
 package org.apache.iceberg.vortex;
 
 import dev.vortex.api.DType;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.DeleteFilter;
 import org.apache.iceberg.expressions.Expression;
@@ -108,12 +110,13 @@ public final class Vortex {
     private Schema schema;
     private ReaderFunction<?> readerFunction;
     private BatchReaderFunction<?> batchReaderFunction;
-    private Map<Integer, ?> idToConstant;
+    private Map<Integer, Object> idToConstant = new HashMap<>();
     private Optional<Expression> filterPredicate = Optional.empty();
     private Optional<DeleteFilter<?>> deleteFilter = Optional.empty();
 
     ReadBuilder(InputFile inputFile) {
       this.inputFile = inputFile;
+      this.idToConstant.put(MetadataColumns.FILE_PATH_COLUMN_ID, inputFile.location());
     }
 
     @Override
@@ -150,7 +153,7 @@ public final class Vortex {
 
     @Override
     public ReadBuilder constantFieldAccessors(Map<Integer, ?> constantFieldAccessors) {
-      this.idToConstant = constantFieldAccessors;
+      this.idToConstant.putAll(constantFieldAccessors);
       return this;
     }
 

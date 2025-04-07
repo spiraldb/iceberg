@@ -32,8 +32,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import net.jcip.annotations.Immutable;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.ByteSlice;
 import org.apache.iceberg.expressions.Expression;
@@ -91,16 +93,19 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
         Optional<SerializedBitmap> serializedBitmap = deleteFilter.flatMap(DeleteFilter::bitmapBytes)
                 .map(bitmapBytes -> ImmutableSerializedBitmap.of(bitmapBytes.getBytes(), bitmapBytes.getOffset(), bitmapBytes.getLength(), false));
 
+        // remove _file column if it is pushed down to us, it should be added back in from the Reader
+        List<String> projection_without_file = projection.stream().filter(col -> !col.equals(MetadataColumns.FILE_PATH.name())).collect(Collectors.toList());
         ArrayStream batchStream =
                 vortexFile.newScan(
-                        ScanOptions.builder().addAllColumns(projection).predicate(scanPredicate).selectionBitmap(serializedBitmap).build());
+                        ScanOptions.builder().addAllColumns(projection_without_file).predicate(scanPredicate).selectionBitmap(serializedBitmap).build());
+        DType dType = batchStream.getDataType();
         Preconditions.checkNotNull(batchStream, "batchStream");
 
         if (rowReaderFunc != null) {
             VortexRowReader<T> rowFunction = rowReaderFunc.apply(batchStream.getDataType());
             return new VortexRowIterator<>(batchStream, rowFunction);
         } else {
-            VortexBatchReader<T> batchTransform = batchReaderFunction.apply(batchStream.getDataType());
+            VortexBatchReader<T> batchTransform = batchReaderFunction.apply(dType);
             PrefetchingIterator<Array> iter =
                     new PrefetchingIterator<>(batchStream, 16 * 1024 * 1024, Array::nbytes);
             CloseableIterator<Array> batchIterator = new VortexBatchIterator(iter);
