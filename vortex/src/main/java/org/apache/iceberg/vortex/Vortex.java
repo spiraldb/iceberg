@@ -113,6 +113,7 @@ public final class Vortex {
     private Map<Integer, Object> idToConstant = new HashMap<>();
     private Optional<Expression> filterPredicate = Optional.empty();
     private Optional<DeleteFilter<?>> deleteFilter = Optional.empty();
+    private long[] rowRange;
 
     ReadBuilder(InputFile inputFile) {
       this.inputFile = inputFile;
@@ -133,14 +134,12 @@ public final class Vortex {
 
     @Override
     public ReadBuilder split(long newStart, long newLength) {
-      // TODO(aduffy): support splitting? These are in terms of file bytes, which is pretty
-      //  annoying.
+      this.rowRange = new long[] {newStart, newStart + newLength};
       return this;
     }
 
     @Override
-    public ReadBuilder filter(Expression newFilter, boolean _caseSensitive) {
-      // We always treat the filter as case-sensitive.
+    public ReadBuilder filter(Expression newFilter, boolean _filterCaseSensitive) {
       this.filterPredicate = Optional.of(newFilter);
       return this;
     }
@@ -200,7 +199,7 @@ public final class Vortex {
           readerFunc == null || deleteFilter.isEmpty(),
           "Delete filter cannot be applied to row-based reader");
 
-      return new VortexIterable<>(inputFile, schema, filterPredicate, deleteFilter, readerFunc, batchReaderFunc);
+      return new VortexIterable<>(inputFile, schema, filterPredicate, rowRange, deleteFilter, readerFunc, batchReaderFunc);
     }
 
     public void deleteFilter(DeleteFilter<?> deleteFilter) {

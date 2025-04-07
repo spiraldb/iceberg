@@ -140,8 +140,8 @@ public class VortexSmokeTest {
   // Step 1: create the warehouse, populate it with Citibike data.
   @Test
   public void setupWarehouse() throws IOException, URISyntaxException {
-//    setupWarehouseFormat(FileFormat.VORTEX);
-//    setupWarehouseFormat(FileFormat.PARQUET);
+    //    setupWarehouseFormat(FileFormat.VORTEX);
+    //    setupWarehouseFormat(FileFormat.PARQUET);
     // Parquet with row group size 1MM
     // setupWarehouseFormat(FileFormat.PARQUET, Optional.of("parquet1m"));
     addPositionalDeletesWithSql("vortex");
