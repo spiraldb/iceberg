@@ -90,7 +90,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
             ScanOptions.builder()
                 .addAllColumns(projection)
                 .predicate(scanPredicate)
-                .rowIndices(rowRange)
+                .rowRange(rowRange)
                 .build());
     Preconditions.checkNotNull(batchStream, "batchStream");
 
