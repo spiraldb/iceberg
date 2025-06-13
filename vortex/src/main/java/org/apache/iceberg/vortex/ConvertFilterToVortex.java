@@ -24,6 +24,7 @@ import dev.vortex.api.expressions.GetItem;
 import dev.vortex.api.expressions.Identity;
 import dev.vortex.api.expressions.Literal;
 import dev.vortex.api.expressions.Not;
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.Optional;
@@ -162,6 +163,10 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
         return Literal.float32((Float) literal.value());
       case DOUBLE:
         return Literal.float64((Double) literal.value());
+      case DECIMAL:
+        Types.DecimalType decimalType = (Types.DecimalType) (termType);
+        return Literal.decimal(
+            (BigDecimal) literal.value(), decimalType.precision(), decimalType.scale());
       case STRING:
         {
           CharSequence charSequence = (CharSequence) literal.value();
