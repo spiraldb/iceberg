@@ -107,7 +107,11 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
 
   @Override
   public Expression or(Expression leftResult, Expression rightResult) {
-    return Binary.or(leftResult, rightResult);
+    if (leftResult == UnconvertibleExpr.INSTANCE || rightResult == UnconvertibleExpr.INSTANCE) {
+      return ALWAYS_TRUE;
+    } else {
+      return Binary.or(leftResult, rightResult);
+    }
   }
 
   @Override
