@@ -73,6 +73,12 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   @Override
   public CloseableIterator<T> iterator() {
     File vortexFile = newVortexFile(inputFile);
+    String path = inputFile.location();
+    System.out.println("OPEN VortexIterator for " + path);
+
+    addCloseable(() -> {
+      System.out.println("Closing VortexFile " + path);
+    });
     addCloseable(vortexFile);
 
     // Return the filtered scan, and then the projection, etc.
@@ -95,14 +101,30 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     Preconditions.checkNotNull(batchStream, "batchStream");
 
     DType dtype = batchStream.getDataType();
-    CloseableIterator<Array> batchIterator = CloseableIterator.withClose(batchStream);
+    CloseableIterator<Array> wrappedIterator = new CloseableIterator<Array>() {
+      @Override
+      public void close() {
+        batchStream.close();
+        vortexFile.close();
+      }
+
+      @Override
+      public boolean hasNext() {
+        return batchStream.hasNext();
+      }
+
+      @Override
+      public Array next() {
+        return batchStream.next();
+      }
+    };
 
     if (rowReaderFunc != null) {
       VortexRowReader<T> rowFunction = rowReaderFunc.apply(dtype);
-      return new VortexRowIterator<>(batchIterator, rowFunction);
+      return new VortexRowIterator<>(wrappedIterator, rowFunction);
     } else {
       VortexBatchReader<T> batchTransform = batchReaderFunction.apply(dtype);
-      return CloseableIterator.transform(batchIterator, batchTransform::read);
+      return CloseableIterator.transform(wrappedIterator, batchTransform::read);
     }
   }
 
