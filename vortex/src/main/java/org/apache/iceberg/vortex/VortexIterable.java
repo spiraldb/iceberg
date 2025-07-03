@@ -96,23 +96,24 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     Preconditions.checkNotNull(batchStream, "batchStream");
 
     DType dtype = batchStream.getDataType();
-    CloseableIterator<Array> wrappedIterator = new CloseableIterator<Array>() {
-      @Override
-      public void close() {
-        batchStream.close();
-        vortexFile.close();
-      }
+    CloseableIterator<Array> wrappedIterator =
+        new CloseableIterator<Array>() {
+          @Override
+          public void close() {
+            batchStream.close();
+            vortexFile.close();
+          }
 
-      @Override
-      public boolean hasNext() {
-        return batchStream.hasNext();
-      }
+          @Override
+          public boolean hasNext() {
+            return batchStream.hasNext();
+          }
 
-      @Override
-      public Array next() {
-        return batchStream.next();
-      }
-    };
+          @Override
+          public Array next() {
+            return batchStream.next();
+          }
+        };
 
     if (rowReaderFunc != null) {
       VortexRowReader<T> rowFunction = rowReaderFunc.apply(dtype);
