@@ -73,8 +73,6 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   @Override
   public CloseableIterator<T> iterator() {
     File vortexFile = newVortexFile(inputFile);
-    String path = inputFile.location();
-    System.out.println("OPEN VortexIterator for " + path);
 
     // Return the filtered scan, and then the projection, etc.
     Optional<dev.vortex.api.Expression> scanPredicate =
