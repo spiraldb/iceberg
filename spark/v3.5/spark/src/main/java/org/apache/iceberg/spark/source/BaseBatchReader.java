@@ -19,7 +19,9 @@
 package org.apache.iceberg.spark.source;
 
 import java.util.Map;
+import javax.annotation.Nonnull;
 import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.ScanTask;
 import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.Schema;
@@ -30,18 +32,22 @@ import org.apache.iceberg.formats.FormatModelRegistry;
 import org.apache.iceberg.formats.ReadBuilder;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.InputFile;
-import org.apache.iceberg.io.datafile.DataFileServiceRegistry;
-import org.apache.iceberg.io.datafile.ReadBuilder;
+import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.spark.OrcBatchReadConf;
 import org.apache.iceberg.spark.ParquetBatchReadConf;
-import org.apache.iceberg.spark.VortexBatchReadConf;
+import org.apache.iceberg.spark.ParquetReaderType;
+import org.apache.iceberg.spark.data.vectorized.ColumnVectorWithFilter;
+import org.apache.iceberg.spark.data.vectorized.ColumnarBatchUtil;
+import org.apache.iceberg.spark.data.vectorized.UpdatableDeletedColumnVector;
+import org.apache.iceberg.spark.data.vectorized.VectorizedSparkParquetReaders;
+import org.apache.iceberg.util.Pair;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.vectorized.ColumnVector;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
 
 abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBatch, T> {
   private final ParquetBatchReadConf parquetConf;
   private final OrcBatchReadConf orcConf;
-  private final VortexBatchReadConf vortexConf;
 
   BaseBatchReader(
       Table table,
@@ -51,11 +57,11 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
       boolean caseSensitive,
       ParquetBatchReadConf parquetConf,
       OrcBatchReadConf orcConf,
-      VortexBatchReadConf vortexConf) {
-    super(table, taskGroup, tableSchema, expectedSchema, caseSensitive);
+      boolean cacheDeleteFilesOnExecutors) {
+    super(
+        table, taskGroup, tableSchema, expectedSchema, caseSensitive, cacheDeleteFilesOnExecutors);
     this.parquetConf = parquetConf;
     this.orcConf = orcConf;
-    this.vortexConf = vortexConf;
   }
 
   protected CloseableIterable<ColumnarBatch> newBatchIterable(
@@ -65,35 +71,105 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
       long length,
       Expression residual,
       Map<Integer, ?> idToConstant,
-      SparkDeleteFilter deleteFilter) {
-    Schema requiredSchema = deleteFilter != null ? deleteFilter.requiredSchema() : expectedSchema();
-    ReadBuilder<?, ?> readBuilder =
-        DataFileServiceRegistry.<InternalRow>readBuilder(
-                format,
-                ColumnarBatch.class.getName(),
-                parquetConf != null ? parquetConf.readerType().name() : null,
-                inputFile)
-            .project(requiredSchema)
-            .idToConstant(idToConstant)
-            .withDeleteFilter(deleteFilter)
-            .split(start, length)
-            .filter(residual)
-            .caseSensitive(caseSensitive())
-            // Spark eagerly consumes the batches. So the underlying memory allocated could be
-            // reused
-            // without worrying about subsequent reads clobbering over each other. This improves
-            // read performance as every batch read doesn't have to pay the cost of allocating
-            // memory.
-            .reuseContainers()
-            .withNameMapping(nameMapping());
+      @Nonnull SparkDeleteFilter deleteFilter) {
+    Class<? extends ColumnarBatch> readType =
+        useComet() ? VectorizedSparkParquetReaders.CometColumnarBatch.class : ColumnarBatch.class;
+    ReadBuilder<ColumnarBatch, ?> readBuilder =
+        FormatModelRegistry.readBuilder(format, readType, inputFile);
+
     if (parquetConf != null) {
       readBuilder = readBuilder.recordsPerBatch(parquetConf.batchSize());
     } else if (orcConf != null) {
       readBuilder = readBuilder.recordsPerBatch(orcConf.batchSize());
-    } else if (vortexConf != null) {
-      readBuilder = readBuilder.recordsPerBatch(vortexConf.batchSize());
     }
 
-    return readBuilder.build();
+    CloseableIterable<ColumnarBatch> iterable =
+        readBuilder
+            .project(deleteFilter.requiredSchema())
+            .idToConstant(idToConstant)
+            .split(start, length)
+            .filter(residual)
+            .caseSensitive(caseSensitive())
+            // Spark eagerly consumes the batches. So the underlying memory allocated could be
+            // reused without worrying about subsequent reads clobbering over each other. This
+            // improves read performance as every batch read doesn't have to pay the cost of
+            // allocating memory.
+            .reuseContainers()
+            .withNameMapping(nameMapping())
+            .build();
+
+    return CloseableIterable.transform(iterable, new BatchDeleteFilter(deleteFilter)::filterBatch);
+  }
+
+  private boolean useComet() {
+    return parquetConf != null && parquetConf.readerType() == ParquetReaderType.COMET;
+  }
+
+  @VisibleForTesting
+  static class BatchDeleteFilter {
+    private final DeleteFilter<InternalRow> deletes;
+    private boolean hasIsDeletedColumn;
+    private int rowPositionColumnIndex = -1;
+
+    BatchDeleteFilter(DeleteFilter<InternalRow> deletes) {
+      this.deletes = deletes;
+
+      Schema schema = deletes.requiredSchema();
+      for (int i = 0; i < schema.columns().size(); i++) {
+        if (schema.columns().get(i).fieldId() == MetadataColumns.ROW_POSITION.fieldId()) {
+          this.rowPositionColumnIndex = i;
+        } else if (schema.columns().get(i).fieldId() == MetadataColumns.IS_DELETED.fieldId()) {
+          this.hasIsDeletedColumn = true;
+        }
+      }
+    }
+
+    ColumnarBatch filterBatch(ColumnarBatch batch) {
+      if (!needDeletes()) {
+        return batch;
+      }
+
+      ColumnVector[] vectors = new ColumnVector[batch.numCols()];
+      for (int i = 0; i < batch.numCols(); i++) {
+        vectors[i] = batch.column(i);
+      }
+
+      int numLiveRows = batch.numRows();
+      long rowStartPosInBatch =
+          rowPositionColumnIndex == -1 ? -1 : vectors[rowPositionColumnIndex].getLong(0);
+
+      if (hasIsDeletedColumn) {
+        boolean[] isDeleted =
+            ColumnarBatchUtil.buildIsDeleted(vectors, deletes, rowStartPosInBatch, numLiveRows);
+        for (ColumnVector vector : vectors) {
+          if (vector instanceof UpdatableDeletedColumnVector) {
+            ((UpdatableDeletedColumnVector) vector).setValue(isDeleted);
+          }
+        }
+      } else {
+        Pair<int[], Integer> pair =
+            ColumnarBatchUtil.buildRowIdMapping(vectors, deletes, rowStartPosInBatch, numLiveRows);
+        if (pair != null) {
+          int[] rowIdMapping = pair.first();
+          numLiveRows = pair.second();
+          for (int i = 0; i < vectors.length; i++) {
+            vectors[i] = new ColumnVectorWithFilter(vectors[i], rowIdMapping);
+          }
+        }
+      }
+
+      if (deletes != null && deletes.hasEqDeletes()) {
+        vectors = ColumnarBatchUtil.removeExtraColumns(deletes, vectors);
+      }
+
+      ColumnarBatch output = new ColumnarBatch(vectors);
+      output.setNumRows(numLiveRows);
+      return output;
+    }
+
+    private boolean needDeletes() {
+      return hasIsDeletedColumn
+          || (deletes != null && (deletes.hasEqDeletes() || deletes.hasPosDeletes()));
+    }
   }
 }

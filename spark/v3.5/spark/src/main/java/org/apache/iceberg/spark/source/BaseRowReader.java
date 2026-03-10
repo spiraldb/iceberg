@@ -29,7 +29,6 @@ import org.apache.iceberg.formats.FormatModelRegistry;
 import org.apache.iceberg.formats.ReadBuilder;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.InputFile;
-import org.apache.iceberg.io.datafile.DataFileServiceRegistry;
 import org.apache.spark.sql.catalyst.InternalRow;
 
 abstract class BaseRowReader<T extends ScanTask> extends BaseReader<InternalRow, T> {
@@ -52,13 +51,15 @@ abstract class BaseRowReader<T extends ScanTask> extends BaseReader<InternalRow,
       Expression residual,
       Schema projection,
       Map<Integer, ?> idToConstant) {
-    return DataFileServiceRegistry.readBuilder(format, InternalRow.class.getName(), file)
+    ReadBuilder<InternalRow, ?> reader =
+        FormatModelRegistry.readBuilder(format, InternalRow.class, file);
+    return reader
         .project(projection)
         .idToConstant(idToConstant)
         .reuseContainers()
         .split(start, length)
-        .filter(residual)
         .caseSensitive(caseSensitive())
+        .filter(residual)
         .withNameMapping(nameMapping())
         .build();
   }

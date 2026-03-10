@@ -43,10 +43,11 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 /**
  * A base writer factory to be extended by query engine integrations.
  *
- * @deprecated use {@link RegistryBasedFileWriterFactory}
+ * @deprecated since version 1.11.0 and will be removed in 1.12.0. Use {@link
+ *     RegistryBasedFileWriterFactory}
  */
 @Deprecated
-public abstract class BaseFileWriterFactory<T> implements FileWriterFactory<T> {
+public abstract class BaseFileWriterFactory<T> implements FileWriterFactory<T>, Serializable {
   private final Table table;
   private final FileFormat dataFileFormat;
   private final Schema dataSchema;

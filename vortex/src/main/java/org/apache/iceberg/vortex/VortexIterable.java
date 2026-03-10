@@ -19,7 +19,7 @@
 package org.apache.iceberg.vortex;
 
 import dev.vortex.api.Array;
-import dev.vortex.api.ArrayStream;
+import dev.vortex.api.ArrayIterator;
 import dev.vortex.api.DType;
 import dev.vortex.api.File;
 import dev.vortex.api.Files;
@@ -81,7 +81,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
               return ConvertFilterToVortex.convert(fileSchema, icebergExpression);
             });
 
-    ArrayStream batchStream =
+    ArrayIterator batchStream =
         vortexFile.newScan(
             ScanOptions.builder().addAllColumns(projection).predicate(scanPredicate).build());
     Preconditions.checkNotNull(batchStream, "batchStream");
@@ -155,9 +155,9 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   }
 
   static class VortexBatchIterator implements CloseableIterator<Array> {
-    private ArrayStream stream;
+    private ArrayIterator stream;
 
-    private VortexBatchIterator(ArrayStream stream) {
+    private VortexBatchIterator(ArrayIterator stream) {
       this.stream = stream;
     }
 
@@ -181,14 +181,14 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   }
 
   static class VortexRowIterator<T> implements CloseableIterator<T> {
-    private final ArrayStream stream;
+    private final ArrayIterator stream;
     private final VortexRowReader<T> rowReader;
 
     private Array currentBatch = null;
     private int batchIndex = 0;
     private int batchLen = 0;
 
-    VortexRowIterator(ArrayStream stream, VortexRowReader<T> rowReader) {
+    VortexRowIterator(ArrayIterator stream, VortexRowReader<T> rowReader) {
       this.stream = stream;
       this.rowReader = rowReader;
       if (stream.hasNext()) {
@@ -199,7 +199,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
     @Override
     public void close() throws IOException {
-      // Do not close the ArrayStream, it is closed by the parent.
+      // Do not close the ArrayIterator, it is closed by the parent.
       currentBatch.close();
       currentBatch = null;
     }

@@ -22,8 +22,6 @@ import java.util.List;
 import java.util.Map;
 import org.apache.iceberg.arrow.vectorized.BaseBatchReader;
 import org.apache.iceberg.arrow.vectorized.VectorizedArrowReader;
-import org.apache.iceberg.arrow.vectorized.VectorizedArrowReader.DeletedVectorReader;
-import org.apache.iceberg.io.datafile.DeleteFilter;
 import org.apache.iceberg.parquet.VectorizedReader;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.parquet.column.page.PageReadStore;

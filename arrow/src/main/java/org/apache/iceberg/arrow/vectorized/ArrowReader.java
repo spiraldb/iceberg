@@ -46,8 +46,6 @@ import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.InputFile;
-import org.apache.iceberg.io.datafile.DataFileServiceRegistry;
-import org.apache.iceberg.io.datafile.ReadBuilder;
 import org.apache.iceberg.mapping.NameMappingParser;
 import org.apache.iceberg.parquet.TypeWithSchemaVisitor;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
@@ -125,20 +123,6 @@ public class ArrowReader extends CloseableGroup {
   private final EncryptionManager encryption;
   private final int batchSize;
   private final boolean reuseContainers;
-
-  public static void register() {
-    DataFileServiceRegistry.registerReader(
-        FileFormat.PARQUET,
-        ColumnarBatch.class.getName(),
-        inputFile ->
-            Parquet.read(inputFile)
-                .batchReaderFunction(
-                    (schema, messageType, idToConstant, deleteFilter) ->
-                        VectorizedCombinedScanIterator.buildReader(
-                            schema,
-                            messageType, /* setArrowValidityVector */
-                            NullCheckingForGet.NULL_CHECKING_ENABLED)));
-  }
 
   /**
    * Create a new instance of the reader.
@@ -339,14 +323,8 @@ public class ArrowReader extends CloseableGroup {
       InputFile location = getInputFile(task);
       Preconditions.checkNotNull(location, "Could not find InputFile associated with FileScanTask");
       if (task.file().format() == FileFormat.PARQUET) {
-        ReadBuilder<?, ?> builder =
-            DataFileServiceRegistry.readBuilder(
-                    FileFormat.PARQUET, ColumnarBatch.class.getName(), location)
-                .project(expectedSchema)
-                .split(task.start(), task.length())
-                .recordsPerBatch(batchSize)
-                .filter(task.residual())
-                .caseSensitive(caseSensitive);
+        ReadBuilder<ColumnarBatch, ?> builder =
+            FormatModelRegistry.readBuilder(FileFormat.PARQUET, ColumnarBatch.class, location);
 
         if (reuseContainers) {
           builder.reuseContainers();

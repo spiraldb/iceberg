@@ -27,11 +27,9 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.spark.extensions.ExtensionsTestBase;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-@Disabled
 @ExtendWith(ParameterizedTestExtension.class)
 public class TestRoundTrip extends ExtensionsTestBase {
   @AfterEach

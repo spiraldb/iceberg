@@ -25,7 +25,6 @@ import java.util.Map;
 import org.apache.comet.parquet.AbstractColumnReader;
 import org.apache.comet.parquet.BatchReader;
 import org.apache.iceberg.Schema;
-import org.apache.iceberg.io.datafile.DeleteFilter;
 import org.apache.iceberg.parquet.VectorizedReader;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.spark.SparkSchemaUtil;
@@ -41,7 +40,7 @@ import org.apache.spark.sql.vectorized.ColumnarBatch;
  * populated via delegated read calls to {@link CometColumnReader VectorReader(s)}.
  */
 @SuppressWarnings("checkstyle:VisibilityModifier")
-public class CometColumnarBatchReader implements VectorizedReader<ColumnarBatch> {
+class CometColumnarBatchReader implements VectorizedReader<ColumnarBatch> {
 
   private final CometColumnReader[] readers;
 

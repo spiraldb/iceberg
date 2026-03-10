@@ -686,7 +686,7 @@ public class TestSparkReaderDeletes extends DeleteReadTests {
               false,
               conf,
               null,
-              null)) {
+              true)) {
         while (reader.next()) {
           ColumnarBatch columnarBatch = reader.get();
           int numOfCols = columnarBatch.numCols();

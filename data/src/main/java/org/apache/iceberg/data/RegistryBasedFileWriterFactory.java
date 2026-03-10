@@ -19,6 +19,7 @@
 package org.apache.iceberg.data;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.io.UncheckedIOException;
 import java.util.Map;
 import org.apache.iceberg.FileFormat;
@@ -32,48 +33,46 @@ import org.apache.iceberg.deletes.EqualityDeleteWriter;
 import org.apache.iceberg.deletes.PositionDeleteWriter;
 import org.apache.iceberg.encryption.EncryptedOutputFile;
 import org.apache.iceberg.encryption.EncryptionKeyMetadata;
+import org.apache.iceberg.formats.FileWriterBuilder;
+import org.apache.iceberg.formats.FormatModelRegistry;
 import org.apache.iceberg.io.DataWriter;
 import org.apache.iceberg.io.FileWriterFactory;
-import org.apache.iceberg.io.datafile.DataFileServiceRegistry;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 
 /**
  * A base writer factory to be extended by query engine integrations.
  *
- * @param <T> type of the records
- * @param <S> type of the schema
+ * @param <T> row type
  */
-public abstract class RegistryBasedFileWriterFactory<T, F, S> implements FileWriterFactory<T> {
+public abstract class RegistryBasedFileWriterFactory<T, S>
+    implements FileWriterFactory<T>, Serializable {
   private final Table table;
   private final FileFormat dataFileFormat;
-  private final String inputType;
+  private final Class<T> inputType;
   private final Schema dataSchema;
   private final SortOrder dataSortOrder;
   private final FileFormat deleteFileFormat;
   private final int[] equalityFieldIds;
   private final Schema equalityDeleteRowSchema;
   private final SortOrder equalityDeleteSortOrder;
-  private final Schema positionDeleteRowSchema;
-  private final Map<String, String> writeProperties;
-  private final S rowSchemaType;
-  private final S equalityDeleteSchemaType;
-  private final S positionalDeleteSchemaType;
+  private final Map<String, String> writerProperties;
+  private final S inputSchema;
+  private final S equalityDeleteInputSchema;
 
   protected RegistryBasedFileWriterFactory(
       Table table,
       FileFormat dataFileFormat,
-      String inputType,
+      Class<T> inputType,
       Schema dataSchema,
       SortOrder dataSortOrder,
       FileFormat deleteFileFormat,
       int[] equalityFieldIds,
       Schema equalityDeleteRowSchema,
       SortOrder equalityDeleteSortOrder,
-      Schema positionDeleteRowSchema,
-      Map<String, String> writeProperties,
-      S rowSchemaType,
-      S equalityDeleteSchemaType,
-      S positionalDeleteSchemaType) {
+      Map<String, String> writerProperties,
+      S inputSchema,
+      S equalityDeleteInputSchema) {
     this.table = table;
     this.dataFileFormat = dataFileFormat;
     this.inputType = inputType;
@@ -83,71 +82,74 @@ public abstract class RegistryBasedFileWriterFactory<T, F, S> implements FileWri
     this.equalityFieldIds = equalityFieldIds;
     this.equalityDeleteRowSchema = equalityDeleteRowSchema;
     this.equalityDeleteSortOrder = equalityDeleteSortOrder;
-    this.positionDeleteRowSchema = positionDeleteRowSchema;
-    this.writeProperties = writeProperties != null ? writeProperties : ImmutableMap.of();
-    this.rowSchemaType = rowSchemaType;
-    this.equalityDeleteSchemaType = equalityDeleteSchemaType;
-    this.positionalDeleteSchemaType = positionalDeleteSchemaType;
+    this.writerProperties = writerProperties != null ? writerProperties : ImmutableMap.of();
+    this.inputSchema = inputSchema;
+    this.equalityDeleteInputSchema = equalityDeleteInputSchema;
   }
 
-  protected S rowSchemaType() {
-    return rowSchemaType;
+  protected S inputSchema() {
+    return inputSchema;
   }
 
-  protected S equalityDeleteRowSchemaType() {
-    return equalityDeleteSchemaType;
-  }
-
-  protected S positionDeleteRowSchemaType() {
-    return positionalDeleteSchemaType;
+  protected S equalityDeleteInputSchema() {
+    return equalityDeleteInputSchema;
   }
 
   @Override
   public DataWriter<T> newDataWriter(
       EncryptedOutputFile file, PartitionSpec spec, StructLike partition) {
+    Preconditions.checkArgument(dataSchema != null, "Invalid data schema: null");
     EncryptionKeyMetadata keyMetadata = file.keyMetadata();
-    Map<String, String> properties = table.properties();
-    MetricsConfig metricsConfig = MetricsConfig.forTable(table);
+    Map<String, String> properties = table != null ? table.properties() : ImmutableMap.of();
+    MetricsConfig metricsConfig =
+        table != null ? MetricsConfig.forTable(table) : MetricsConfig.getDefault();
 
     try {
-      return DataFileServiceRegistry.writeBuilder(dataFileFormat, inputType, file)
+      FileWriterBuilder<DataWriter<T>, S> builder =
+          FormatModelRegistry.dataWriteBuilder(dataFileFormat, inputType, file);
+      return builder
           .schema(dataSchema)
-          .set(properties)
-          .set(writeProperties)
+          .engineSchema(inputSchema())
+          .setAll(properties)
+          .setAll(writerProperties)
           .metricsConfig(metricsConfig)
-          .engineSchema(rowSchemaType())
-          .withSpec(spec)
-          .withPartition(partition)
-          .withKeyMetadata(keyMetadata)
-          .withSortOrder(dataSortOrder)
+          .spec(spec)
+          .partition(partition)
+          .keyMetadata(keyMetadata)
+          .sortOrder(dataSortOrder)
           .overwrite()
-          .dataWriter();
+          .build();
     } catch (IOException e) {
-      throw new UncheckedIOException(e);
+      throw new UncheckedIOException("Failed to create new data writer", e);
     }
   }
 
   @Override
   public EqualityDeleteWriter<T> newEqualityDeleteWriter(
       EncryptedOutputFile file, PartitionSpec spec, StructLike partition) {
+    Preconditions.checkArgument(equalityDeleteRowSchema != null, "Invalid delete schema: null");
+
     EncryptionKeyMetadata keyMetadata = file.keyMetadata();
-    Map<String, String> properties = table.properties();
-    MetricsConfig metricsConfig = MetricsConfig.forTable(table);
+    Map<String, String> properties = table != null ? table.properties() : ImmutableMap.of();
+    MetricsConfig metricsConfig =
+        table != null ? MetricsConfig.forTable(table) : MetricsConfig.getDefault();
 
     try {
-      return DataFileServiceRegistry.writeBuilder(deleteFileFormat, inputType, file)
-          .set(properties)
-          .set(writeProperties)
+      FileWriterBuilder<EqualityDeleteWriter<T>, S> builder =
+          FormatModelRegistry.equalityDeleteWriteBuilder(deleteFileFormat, inputType, file);
+      return builder
+          .setAll(properties)
+          .setAll(writerProperties)
           .metricsConfig(metricsConfig)
-          .engineSchema(equalityDeleteRowSchemaType())
-          .withRowSchema(equalityDeleteRowSchema)
-          .withEqualityFieldIds(equalityFieldIds)
-          .withSpec(spec)
-          .withPartition(partition)
-          .withKeyMetadata(keyMetadata)
-          .withSortOrder(equalityDeleteSortOrder)
+          .schema(equalityDeleteRowSchema)
+          .engineSchema(equalityDeleteInputSchema())
+          .equalityFieldIds(equalityFieldIds)
+          .spec(spec)
+          .partition(partition)
+          .keyMetadata(keyMetadata)
+          .sortOrder(equalityDeleteSortOrder)
           .overwrite()
-          .equalityDeleteWriter();
+          .build();
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to create new equality delete writer", e);
     }
@@ -157,35 +159,24 @@ public abstract class RegistryBasedFileWriterFactory<T, F, S> implements FileWri
   public PositionDeleteWriter<T> newPositionDeleteWriter(
       EncryptedOutputFile file, PartitionSpec spec, StructLike partition) {
     EncryptionKeyMetadata keyMetadata = file.keyMetadata();
-    Map<String, String> properties = table.properties();
-    MetricsConfig metricsConfig = MetricsConfig.forPositionDelete(table);
+    Map<String, String> properties = table != null ? table.properties() : ImmutableMap.of();
+    MetricsConfig metricsConfig =
+        table != null ? MetricsConfig.forPositionDelete(table) : MetricsConfig.forPositionDelete();
 
     try {
-      return DataFileServiceRegistry.writeBuilder(deleteFileFormat, inputType, file)
-          .set(properties)
-          .set(writeProperties)
+      FileWriterBuilder<PositionDeleteWriter<T>, ?> builder =
+          FormatModelRegistry.positionDeleteWriteBuilder(deleteFileFormat, file);
+      return builder
+          .setAll(properties)
+          .setAll(writerProperties)
           .metricsConfig(metricsConfig)
-          .engineSchema(positionDeleteRowSchemaType())
-          .withRowSchema(positionDeleteRowSchema)
-          .withSpec(spec)
-          .withPartition(partition)
-          .withKeyMetadata(keyMetadata)
+          .spec(spec)
+          .partition(partition)
+          .keyMetadata(keyMetadata)
           .overwrite()
-          .positionDeleteWriter();
+          .build();
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to create new position delete writer", e);
     }
-  }
-
-  protected Schema dataSchema() {
-    return dataSchema;
-  }
-
-  protected Schema equalityDeleteRowSchema() {
-    return equalityDeleteRowSchema;
-  }
-
-  protected Schema positionDeleteRowSchema() {
-    return positionDeleteRowSchema;
   }
 }

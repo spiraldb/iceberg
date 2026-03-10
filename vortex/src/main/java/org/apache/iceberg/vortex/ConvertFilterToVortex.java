@@ -21,9 +21,9 @@ package org.apache.iceberg.vortex;
 import dev.vortex.api.Expression;
 import dev.vortex.api.expressions.Binary;
 import dev.vortex.api.expressions.GetItem;
-import dev.vortex.api.expressions.Identity;
 import dev.vortex.api.expressions.Literal;
 import dev.vortex.api.expressions.Not;
+import dev.vortex.api.expressions.Root;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.Optional;
@@ -105,10 +105,10 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
       org.apache.iceberg.expressions.Literal<T> icebergLit = pred.asLiteralPredicate().literal();
       Literal<?> vortexLit = toVortexLiteral(icebergLit, term.type());
       // Term translates into a GetItem(Identity), i.e. get a field from the batch
-      GetItem vortexTerm = GetItem.of(Identity.INSTANCE, term.ref().field().name());
+      GetItem vortexTerm = GetItem.of(Root.INSTANCE, term.ref().field().name());
       return fromBinaryPredicate(pred.op(), vortexTerm, vortexLit);
     } else if (pred.isUnaryPredicate()) {
-      GetItem vortexTerm = GetItem.of(Identity.INSTANCE, term.ref().field().name());
+      GetItem vortexTerm = GetItem.of(Root.INSTANCE, term.ref().field().name());
       return fromUnaryPredicate(pred.op(), vortexTerm);
     } else {
       // Set predicates are not supported currently.

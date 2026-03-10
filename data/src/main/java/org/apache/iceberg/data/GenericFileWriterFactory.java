@@ -33,12 +33,21 @@ import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.avro.Avro;
+import org.apache.iceberg.data.avro.DataWriter;
+import org.apache.iceberg.data.orc.GenericOrcWriter;
+import org.apache.iceberg.data.parquet.GenericParquetWriter;
+import org.apache.iceberg.deletes.PositionDeleteWriter;
+import org.apache.iceberg.encryption.EncryptedOutputFile;
+import org.apache.iceberg.formats.FormatModelRegistry;
 import org.apache.iceberg.orc.ORC;
 import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-class GenericFileWriterFactory extends RegistryBasedFileWriterFactory<Record, Object, Schema> {
+public class GenericFileWriterFactory extends RegistryBasedFileWriterFactory<Record, Schema> {
+  private static final Logger LOG = LoggerFactory.getLogger(GenericFileWriterFactory.class);
 
   private Table table;
   private FileFormat format;
@@ -123,58 +132,104 @@ class GenericFileWriterFactory extends RegistryBasedFileWriterFactory<Record, Ob
     super(
         table,
         dataFileFormat,
-        Record.class.getName(),
+        Record.class,
         dataSchema,
         dataSortOrder,
         deleteFileFormat,
         equalityFieldIds,
         equalityDeleteRowSchema,
         equalityDeleteSortOrder,
-        positionDeleteRowSchema,
         ImmutableMap.of(),
         dataSchema,
-        equalityDeleteRowSchema,
-        positionDeleteRowSchema);
+        equalityDeleteRowSchema);
+    this.table = table;
+    this.format = dataFileFormat;
+    this.positionDeleteRowSchema = positionDeleteRowSchema;
   }
 
   static Builder builderFor(Table table) {
     return new Builder(table);
   }
 
+  /**
+   * @deprecated Since 1.11.0, will be removed in 1.12.0. It won't be called starting in 1.11.0 as
+   *     the configuration is done by the {@link FormatModelRegistry}.
+   */
+  @Deprecated
   protected void configureDataWrite(Avro.DataWriteBuilder builder) {
-    throw new UnsupportedOperationException("Deprecated");
+    builder.createWriterFunc(DataWriter::create);
   }
 
+  /**
+   * @deprecated Since 1.11.0, will be removed in 1.12.0. It won't be called starting in 1.11.0 as
+   *     the configuration is done by the {@link FormatModelRegistry}.
+   */
+  @Deprecated
   protected void configureEqualityDelete(Avro.DeleteWriteBuilder builder) {
-    throw new UnsupportedOperationException("Deprecated");
+    builder.createWriterFunc(DataWriter::create);
   }
 
+  /**
+   * @deprecated Since 1.11.0, will be removed in 1.12.0. It won't be called starting in 1.11.0 as
+   *     the configuration is done by the {@link FormatModelRegistry}.
+   */
+  @Deprecated
   protected void configurePositionDelete(Avro.DeleteWriteBuilder builder) {
-    throw new UnsupportedOperationException("Deprecated");
+    builder.createWriterFunc(DataWriter::create);
   }
 
+  /**
+   * @deprecated Since 1.11.0, will be removed in 1.12.0. It won't be called starting in 1.11.0 as
+   *     the configuration is done by the {@link FormatModelRegistry}.
+   */
+  @Deprecated
   protected void configureDataWrite(Parquet.DataWriteBuilder builder) {
-    throw new UnsupportedOperationException("Deprecated");
+    builder.createWriterFunc(GenericParquetWriter::create);
   }
 
+  /**
+   * @deprecated Since 1.11.0, will be removed in 1.12.0. It won't be called starting in 1.11.0 as
+   *     the configuration is done by the {@link FormatModelRegistry}.
+   */
+  @Deprecated
   protected void configureEqualityDelete(Parquet.DeleteWriteBuilder builder) {
-    throw new UnsupportedOperationException("Deprecated");
+    builder.createWriterFunc(GenericParquetWriter::create);
   }
 
+  /**
+   * @deprecated Since 1.11.0, will be removed in 1.12.0. It won't be called starting in 1.11.0 as
+   *     the configuration is done by the {@link FormatModelRegistry}.
+   */
+  @Deprecated
   protected void configurePositionDelete(Parquet.DeleteWriteBuilder builder) {
-    throw new UnsupportedOperationException("Deprecated");
+    builder.createWriterFunc(GenericParquetWriter::create);
   }
 
+  /**
+   * @deprecated Since 1.11.0, will be removed in 1.12.0. It won't be called starting in 1.11.0 as
+   *     the configuration is done by the {@link FormatModelRegistry}.
+   */
+  @Deprecated
   protected void configureDataWrite(ORC.DataWriteBuilder builder) {
-    throw new UnsupportedOperationException("Deprecated");
+    builder.createWriterFunc(GenericOrcWriter::buildWriter);
   }
 
+  /**
+   * @deprecated Since 1.11.0, will be removed in 1.12.0. It won't be called starting in 1.11.0 as
+   *     the configuration is done by the {@link FormatModelRegistry}.
+   */
+  @Deprecated
   protected void configureEqualityDelete(ORC.DeleteWriteBuilder builder) {
-    throw new UnsupportedOperationException("Deprecated");
+    builder.createWriterFunc(GenericOrcWriter::buildWriter);
   }
 
+  /**
+   * @deprecated Since 1.11.0, will be removed in 1.12.0. It won't be called starting in 1.11.0 as
+   *     the configuration is done by the {@link FormatModelRegistry}.
+   */
+  @Deprecated
   protected void configurePositionDelete(ORC.DeleteWriteBuilder builder) {
-    throw new UnsupportedOperationException("Deprecated");
+    builder.createWriterFunc(GenericOrcWriter::buildWriter);
   }
 
   @Override

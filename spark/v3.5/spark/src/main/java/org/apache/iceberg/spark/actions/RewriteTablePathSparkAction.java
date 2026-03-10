@@ -50,7 +50,11 @@ import org.apache.iceberg.TableMetadata.MetadataLogEntry;
 import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.actions.ImmutableRewriteTablePath;
 import org.apache.iceberg.actions.RewriteTablePath;
+import org.apache.iceberg.avro.Avro;
 import org.apache.iceberg.data.Record;
+import org.apache.iceberg.data.avro.DataWriter;
+import org.apache.iceberg.data.orc.GenericOrcWriter;
+import org.apache.iceberg.data.parquet.GenericParquetWriter;
 import org.apache.iceberg.deletes.PositionDeleteWriter;
 import org.apache.iceberg.encryption.EncryptedFiles;
 import org.apache.iceberg.exceptions.RuntimeIOException;
@@ -60,7 +64,8 @@ import org.apache.iceberg.io.DeleteSchemaUtil;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.OutputFile;
-import org.apache.iceberg.io.datafile.DataFileServiceRegistry;
+import org.apache.iceberg.orc.ORC;
+import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
@@ -744,9 +749,8 @@ public class RewriteTablePathSparkAction extends BaseSparkAction<RewriteTablePat
 
   private static CloseableIterable<Record> positionDeletesReader(
       InputFile inputFile, FileFormat format, PartitionSpec spec) {
-    Schema deleteSchema = DeleteSchemaUtil.posDeleteReadSchema(spec.schema());
-    return DataFileServiceRegistry.readBuilder(format, Record.class.getName(), inputFile)
-        .project(deleteSchema)
+    return FormatModelRegistry.readBuilder(format, Record.class, inputFile)
+        .project(DeleteSchemaUtil.posDeleteReadSchema(spec.schema()))
         .reuseContainers()
         .build();
   }
@@ -758,12 +762,38 @@ public class RewriteTablePathSparkAction extends BaseSparkAction<RewriteTablePat
       StructLike partition,
       Schema rowSchema)
       throws IOException {
-    return DataFileServiceRegistry.writeBuilder(
-            format, Record.class.getName(), EncryptedFiles.plainAsEncryptedOutput(outputFile))
-        .withPartition(partition)
-        .withRowSchema(rowSchema)
-        .withSpec(spec)
-        .positionDeleteWriter();
+    if (rowSchema == null) {
+      return FormatModelRegistry.<Record>positionDeleteWriteBuilder(
+              format, EncryptedFiles.plainAsEncryptedOutput(outputFile))
+          .partition(partition)
+          .spec(spec)
+          .build();
+    } else {
+      return switch (format) {
+        case AVRO ->
+            Avro.writeDeletes(outputFile)
+                .createWriterFunc(DataWriter::create)
+                .withPartition(partition)
+                .rowSchema(rowSchema)
+                .withSpec(spec)
+                .buildPositionWriter();
+        case PARQUET ->
+            Parquet.writeDeletes(outputFile)
+                .createWriterFunc(GenericParquetWriter::create)
+                .withPartition(partition)
+                .rowSchema(rowSchema)
+                .withSpec(spec)
+                .buildPositionWriter();
+        case ORC ->
+            ORC.writeDeletes(outputFile)
+                .createWriterFunc(GenericOrcWriter::buildWriter)
+                .withPartition(partition)
+                .rowSchema(rowSchema)
+                .withSpec(spec)
+                .buildPositionWriter();
+        default -> throw new UnsupportedOperationException("Unsupported file format: " + format);
+      };
+    }
   }
 
   private Set<Snapshot> snapshotSet(TableMetadata metadata) {
