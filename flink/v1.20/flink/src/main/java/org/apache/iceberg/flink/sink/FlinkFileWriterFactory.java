@@ -32,13 +32,11 @@ import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.data.RegistryBasedFileWriterFactory;
 import org.apache.iceberg.flink.FlinkSchemaUtil;
-import org.apache.iceberg.io.DeleteSchemaUtil;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 
-class FlinkFileWriterFactory extends RegistryBasedFileWriterFactory<RowData, Object, RowType>
+public class FlinkFileWriterFactory extends RegistryBasedFileWriterFactory<RowData, RowType>
     implements Serializable {
-
   FlinkFileWriterFactory(
       Table table,
       FileFormat dataFileFormat,
@@ -55,33 +53,33 @@ class FlinkFileWriterFactory extends RegistryBasedFileWriterFactory<RowData, Obj
     super(
         table,
         dataFileFormat,
-        RowData.class.getName(),
+        RowData.class,
         dataSchema,
         dataSortOrder,
         deleteFileFormat,
         equalityFieldIds,
         equalityDeleteRowSchema,
         equalityDeleteSortOrder,
-        positionDeleteRowSchema,
-        ImmutableMap.of(),
+        writeProperties,
         dataFlinkType == null ? FlinkSchemaUtil.convert(dataSchema) : dataFlinkType,
-        equalityDeleteFlinkType == null
-            ? equalityDeleteRowSchema == null
-                ? null
-                : FlinkSchemaUtil.convert(equalityDeleteRowSchema)
-            : equalityDeleteFlinkType,
-        positionDeleteFlinkType == null
-            ? positionDeleteRowSchema == null
-                ? null
-                : FlinkSchemaUtil.convert(DeleteSchemaUtil.posDeleteSchema(positionDeleteRowSchema))
-            : positionDeleteFlinkType);
+        equalityDeleteInputSchema(equalityDeleteFlinkType, equalityDeleteRowSchema));
+  }
+
+  private static RowType equalityDeleteInputSchema(RowType rowType, Schema rowSchema) {
+    if (rowType != null) {
+      return rowType;
+    } else if (rowSchema != null) {
+      return FlinkSchemaUtil.convert(rowSchema);
+    } else {
+      return null;
+    }
   }
 
   static Builder builderFor(Table table) {
     return new Builder(table);
   }
 
-  static class Builder {
+  public static class Builder {
     private final Table table;
     private FileFormat dataFileFormat;
     private Schema dataSchema;
