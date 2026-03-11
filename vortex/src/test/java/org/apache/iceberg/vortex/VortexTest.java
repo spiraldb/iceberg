@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
+import java.util.List;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
@@ -46,6 +47,15 @@ public final class VortexTest {
           required(3, "salary", Types.LongType.get()));
 
   @TempDir private static File tempDir;
+
+  @Test
+  public void writeData() throws IOException {
+    List<Record> records =
+        List.of(
+            makeEmployee(1L, "Alice", 1_000),
+            makeEmployee(2L, "Bob", 2_000),
+            makeEmployee(3L, "Carol", 3_000));
+  }
 
   @Test
   public void testGenericReader() throws IOException {
@@ -93,7 +103,7 @@ public final class VortexTest {
 
       @Override
       public String location() {
-        return outPath.toAbsolutePath().toString();
+        return outPath.toAbsolutePath().toUri().toString();
       }
 
       @Override

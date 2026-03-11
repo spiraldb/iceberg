@@ -26,26 +26,15 @@ import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.InternalData;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.StructLike;
-import org.apache.iceberg.data.Record;
-import org.apache.iceberg.data.vortex.GenericVortexReader;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.InputFile;
-import org.apache.iceberg.io.datafile.DataFileServiceRegistry;
 import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 
 /** Entrypoint to working with Vortex {@link FileFormat formatted} content files. */
 public final class Vortex {
   private Vortex() {}
-
-  public static void register() {
-    // Register generic Vortex reader.
-    DataFileServiceRegistry.registerReader(
-        FileFormat.VORTEX,
-        Record.class.getName(),
-        inputFile -> read(inputFile).readerFunction(GenericVortexReader::buildReader));
-  }
 
   public static ReadBuilder read(InputFile inputFile) {
     return new ReadBuilder(inputFile);

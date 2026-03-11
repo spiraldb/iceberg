@@ -97,21 +97,21 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   }
 
   private static File newVortexFile(InputFile inputFile) {
-    Preconditions.checkArgument(
-        inputFile instanceof HadoopInputFile, "Vortex only supports HadoopInputFile currently");
     LOG.debug("opening Vortex file: {}", inputFile);
 
-    HadoopInputFile hadoopInputFile = (HadoopInputFile) inputFile;
-    URI path = hadoopInputFile.getPath().toUri();
-    switch (path.getScheme()) {
-      case "s3a":
-        return Files.open(path, s3PropertiesFromHadoopConf(hadoopInputFile.getConf()));
-      case "file":
-        return Files.open(path, Map.of());
-      default:
+    URI uriLocation = URI.create(inputFile.location());
+    return switch (uriLocation.getScheme()) {
+      case "s3a" -> {
+        Preconditions.checkArgument(
+            inputFile instanceof HadoopInputFile, "Vortex only supports HadoopInputFile currently");
+        HadoopInputFile hadoopInputFile = (HadoopInputFile) inputFile;
+        yield Files.open(uriLocation, s3PropertiesFromHadoopConf(hadoopInputFile.getConf()));
+      }
+      case "file" -> Files.open(uriLocation, Map.of());
         // TODO(aduffy): add support for Azure
-        throw new IllegalArgumentException("Unsupported scheme: " + path.getScheme());
-    }
+      default ->
+          throw new IllegalArgumentException("Unsupported scheme: " + uriLocation.getScheme());
+    };
   }
 
   static final String FS_S3A_ACCESS_KEY = "fs.s3a.access.key";
