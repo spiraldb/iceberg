@@ -62,9 +62,8 @@ public final class VortexTest {
     InputFile inputFile = loadResourceFile("employees.vortex", tempDir);
 
     try (CloseableIterable<Record> records =
-        Vortex.read(inputFile)
+        VortexFormatModel.<Record, Void>rowReadBuilder(inputFile, GenericVortexReader::buildReader)
             .project(EMPLOYEE_SCHEMA)
-            .readerFunction(GenericVortexReader::buildReader)
             .build()) {
 
       assertThat(records)

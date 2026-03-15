@@ -31,12 +31,13 @@ import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 
 /** Entrypoint to working with Vortex {@link FileFormat formatted} content files. */
 public final class Vortex {
   private Vortex() {}
 
-  public static ReadBuilder read(InputFile inputFile) {
+  static ReadBuilder read(InputFile inputFile) {
     return new ReadBuilder(inputFile);
   }
 
@@ -49,9 +50,7 @@ public final class Vortex {
         Schema icebergSchema, DType vortexSchema, Map<Integer, ?> idToConstant);
   }
 
-  public static final class ReadBuilder
-      implements InternalData.ReadBuilder,
-          org.apache.iceberg.io.datafile.ReadBuilder<ReadBuilder, Object> {
+  static final class ReadBuilder implements InternalData.ReadBuilder {
     private final InputFile inputFile;
     private Schema schema;
     private ReaderFunction<?> readerFunction;
@@ -69,13 +68,11 @@ public final class Vortex {
       return this;
     }
 
-    @Override
     public ReadBuilder recordsPerBatch(int numRowsPerBatch) {
       // TODO(aduffy): will we care about this?
       return this;
     }
 
-    @Override
     public ReadBuilder set(String key, String value) {
       // TODO(aduffy): support configuring object store credentials here.
       return this;
@@ -88,9 +85,7 @@ public final class Vortex {
       return this;
     }
 
-    @Override
     public ReadBuilder filter(Expression newFilter) {
-      // At least print the filter.
       this.filterPredicate = Optional.of(newFilter);
       return this;
     }
@@ -101,19 +96,11 @@ public final class Vortex {
       return this;
     }
 
-    @Override
-    public ReadBuilder reuseContainers(boolean newReuseContainers) {
-      // This is a no-op.
-      return this;
-    }
-
-    @Override
     public ReadBuilder idToConstant(Map<Integer, ?> newIdConstant) {
       this.idToConstant = newIdConstant;
       return this;
     }
 
-    @Override
     public ReadBuilder withNameMapping(NameMapping newNameMapping) {
       // TODO(aduffy): is this for field renames? Figure out how to patch this through.
       return this;
@@ -165,6 +152,109 @@ public final class Vortex {
                       batchReaderFunction.batchRead(schema, fileSchema, idToConstant);
 
       return new VortexIterable<>(inputFile, schema, filterPredicate, readerFunc, batchReaderFunc);
+    }
+  }
+
+  /**
+   * Wrapper that adapts a {@link Vortex.ReadBuilder} (an {@link InternalData.ReadBuilder}
+   * implementation) to the {@link org.apache.iceberg.formats.ReadBuilder} interface used by the
+   * {@link org.apache.iceberg.formats.FormatModel} API.
+   */
+  static class ReadBuilderWrapper<D, S>
+      implements org.apache.iceberg.formats.ReadBuilder<D, S> {
+    private final ReadBuilder internal;
+    private final ReaderFunction<?> readerFunction;
+    private final BatchReaderFunction<?> batchReaderFunction;
+    private Map<Integer, ?> idToConstant = ImmutableMap.of();
+
+    static <D, S> ReadBuilderWrapper<D, S> forRowReader(
+        InputFile inputFile, ReaderFunction<D> readerFunction) {
+      return new ReadBuilderWrapper<>(inputFile, readerFunction, null);
+    }
+
+    static <D, S> ReadBuilderWrapper<D, S> forBatchReader(
+        InputFile inputFile, BatchReaderFunction<D> batchReaderFunction) {
+      return new ReadBuilderWrapper<>(inputFile, null, batchReaderFunction);
+    }
+
+    private ReadBuilderWrapper(
+        InputFile inputFile,
+        ReaderFunction<?> readerFunction,
+        BatchReaderFunction<?> batchReaderFunction) {
+      this.internal = Vortex.read(inputFile);
+      this.readerFunction = readerFunction;
+      this.batchReaderFunction = batchReaderFunction;
+    }
+
+    @Override
+    public org.apache.iceberg.formats.ReadBuilder<D, S> split(long start, long length) {
+      internal.split(start, length);
+      return this;
+    }
+
+    @Override
+    public org.apache.iceberg.formats.ReadBuilder<D, S> project(Schema schema) {
+      internal.project(schema);
+      return this;
+    }
+
+    @Override
+    public org.apache.iceberg.formats.ReadBuilder<D, S> engineProjection(S schema) {
+      // Vortex does not currently use engine-specific schemas
+      return this;
+    }
+
+    @Override
+    public org.apache.iceberg.formats.ReadBuilder<D, S> caseSensitive(boolean caseSensitive) {
+      // Vortex does not currently support case-sensitive filtering
+      return this;
+    }
+
+    @Override
+    public org.apache.iceberg.formats.ReadBuilder<D, S> filter(Expression filter) {
+      internal.filter(filter);
+      return this;
+    }
+
+    @Override
+    public org.apache.iceberg.formats.ReadBuilder<D, S> set(String key, String value) {
+      internal.set(key, value);
+      return this;
+    }
+
+    @Override
+    public org.apache.iceberg.formats.ReadBuilder<D, S> reuseContainers() {
+      internal.reuseContainers();
+      return this;
+    }
+
+    @Override
+    public org.apache.iceberg.formats.ReadBuilder<D, S> recordsPerBatch(int rowsPerBatch) {
+      internal.recordsPerBatch(rowsPerBatch);
+      return this;
+    }
+
+    @Override
+    public org.apache.iceberg.formats.ReadBuilder<D, S> idToConstant(
+        Map<Integer, ?> newIdToConstant) {
+      this.idToConstant = newIdToConstant;
+      return this;
+    }
+
+    @Override
+    public org.apache.iceberg.formats.ReadBuilder<D, S> withNameMapping(NameMapping nameMapping) {
+      internal.withNameMapping(nameMapping);
+      return this;
+    }
+
+    @Override
+    public CloseableIterable<D> build() {
+      internal.idToConstant(idToConstant);
+      if (batchReaderFunction != null) {
+        return internal.batchReaderFunction(batchReaderFunction).build();
+      } else {
+        return internal.readerFunction(readerFunction).build();
+      }
     }
   }
 }
