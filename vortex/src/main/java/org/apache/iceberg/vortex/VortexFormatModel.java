@@ -33,16 +33,12 @@ public class VortexFormatModel<D, S>
   private final Vortex.ReaderFunction<D> rowReaderFunction;
 
   public static <D, S> VortexFormatModel<D, S> forRowReader(
-      Class<D> type,
-      Class<S> schemaType,
-      Vortex.ReaderFunction<D> readerFunction) {
+      Class<D> type, Class<S> schemaType, Vortex.ReaderFunction<D> readerFunction) {
     return new VortexFormatModel<>(type, schemaType, readerFunction, null);
   }
 
   public static <D, S> VortexFormatModel<D, S> forBatchReader(
-      Class<D> type,
-      Class<S> schemaType,
-      Vortex.BatchReaderFunction<D> batchReaderFunction) {
+      Class<D> type, Class<S> schemaType, Vortex.BatchReaderFunction<D> batchReaderFunction) {
     return new VortexFormatModel<>(type, schemaType, null, batchReaderFunction);
   }
 

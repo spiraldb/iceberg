@@ -160,8 +160,7 @@ public final class Vortex {
    * implementation) to the {@link org.apache.iceberg.formats.ReadBuilder} interface used by the
    * {@link org.apache.iceberg.formats.FormatModel} API.
    */
-  static class ReadBuilderWrapper<D, S>
-      implements org.apache.iceberg.formats.ReadBuilder<D, S> {
+  static class ReadBuilderWrapper<D, S> implements org.apache.iceberg.formats.ReadBuilder<D, S> {
     private final ReadBuilder internal;
     private final ReaderFunction<?> readerFunction;
     private final BatchReaderFunction<?> batchReaderFunction;
