@@ -929,14 +929,14 @@ project(':iceberg-vortex') {
     useJUnitPlatform()
   }
   dependencies {
-    implementation project(path: ':iceberg-bundled-guava', configuration: 'shadow')
     api project(':iceberg-api')
+    api(libs.vortex.jni) {
+      exclude group: 'com.google.protobuf', module: 'protobuf-java'
+    }
+    implementation project(path: ':iceberg-bundled-guava', configuration: 'shadow')
     implementation project(':iceberg-core')
     implementation project(':iceberg-common')
     implementation project(':iceberg-arrow')
-    implementation(libs.vortex.jni) {
-      exclude group: 'com.google.protobuf', module: 'protobuf-java'
-    }
 
     annotationProcessor libs.immutables.value
     compileOnly libs.immutables.value
