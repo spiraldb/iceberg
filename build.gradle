@@ -17,7 +17,9 @@
  * under the License.
  */
 
+
 import groovy.transform.Memoized
+
 import java.util.regex.Matcher
 import java.util.regex.Pattern
 
@@ -155,7 +157,7 @@ subprojects {
         rootTask.finalizedBy showDeprecationRulesOnRevApiFailure
       }
     }
-    
+
     tasks.named("revapiAnalyze").configure {
       dependsOn(":iceberg-common:jar")
     }
@@ -408,10 +410,15 @@ project(':iceberg-data') {
     implementation project(':iceberg-core')
     compileOnly project(':iceberg-parquet')
     compileOnly project(':iceberg-orc')
+    compileOnly project(':iceberg-vortex')
     compileOnly(libs.hadoop3.common) {
       exclude group: 'commons-beanutils'
       exclude group: 'org.apache.avro', module: 'avro'
       exclude group: 'org.slf4j', module: 'slf4j-log4j12'
+    }
+
+    implementation(libs.vortex.jni) {
+      exclude group: 'com.google.protobuf', module: 'protobuf-java'
     }
 
     implementation("${libs.orc.core.get().module}:${libs.versions.orc.get()}:nohive") {
@@ -919,6 +926,30 @@ project(':iceberg-parquet') {
 
     testImplementation project(path: ':iceberg-api', configuration: 'testArtifacts')
     testImplementation project(path: ':iceberg-core', configuration: 'testArtifacts')
+    testImplementation project(path: ':iceberg-data')
+  }
+}
+
+project(':iceberg-vortex') {
+  test {
+    useJUnitPlatform()
+  }
+  dependencies {
+    implementation project(path: ':iceberg-bundled-guava', configuration: 'shadow')
+    api project(':iceberg-api')
+    implementation project(':iceberg-core')
+    implementation project(':iceberg-common')
+    implementation(libs.vortex.jni) {
+      exclude group: 'com.google.protobuf', module: 'protobuf-java'
+    }
+
+    annotationProcessor libs.immutables.value
+    compileOnly libs.immutables.value
+    compileOnly(libs.hadoop3.client) {
+      exclude group: 'org.apache.avro', module: 'avro'
+    }
+
+    testImplementation libs.hadoop3.common
   }
 }
 
