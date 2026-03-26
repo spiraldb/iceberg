@@ -52,9 +52,9 @@ public final class VortexTest {
     InputFile inputFile = loadResourceFile("employees.vortex", tempDir);
 
     try (CloseableIterable<Record> records =
-        Vortex.read(inputFile)
+        VortexFormatModel.forRowReader(Record.class, Void.class, GenericVortexReader::buildReader)
+            .readBuilder(inputFile)
             .project(EMPLOYEE_SCHEMA)
-            .readerFunction(GenericVortexReader::buildReader)
             .build()) {
 
       assertThat(records)
@@ -93,7 +93,7 @@ public final class VortexTest {
 
       @Override
       public String location() {
-        return outPath.toAbsolutePath().toString();
+        return outPath.toAbsolutePath().toUri().toString();
       }
 
       @Override

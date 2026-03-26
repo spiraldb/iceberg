@@ -36,13 +36,13 @@ import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.spark.OrcBatchReadConf;
 import org.apache.iceberg.spark.ParquetBatchReadConf;
+import org.apache.iceberg.spark.VortexBatchReadConf;
 import org.apache.iceberg.spark.data.vectorized.ColumnVectorWithFilter;
 import org.apache.iceberg.spark.data.vectorized.ColumnarBatchUtil;
 import org.apache.iceberg.spark.data.vectorized.UpdatableDeletedColumnVector;
 import org.apache.iceberg.util.Pair;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.vectorized.ColumnVector;
-import org.apache.iceberg.spark.VortexBatchReadConf;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
 
 abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBatch, T> {
@@ -89,6 +89,8 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
       readBuilder = readBuilder.recordsPerBatch(parquetConf.batchSize());
     } else if (orcConf != null) {
       readBuilder = readBuilder.recordsPerBatch(orcConf.batchSize());
+    } else if (vortexConf != null) {
+      readBuilder = readBuilder.recordsPerBatch(vortexConf.batchSize());
     }
 
     CloseableIterable<ColumnarBatch> iterable =

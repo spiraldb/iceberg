@@ -78,6 +78,9 @@ project(":iceberg-spark:iceberg-spark-${sparkMajorVersion}_${scalaVersion}") {
 
     implementation libs.parquet.column
     implementation libs.parquet.hadoop
+    implementation(libs.vortex.spark212) {
+      exclude group: "dev.vortex"
+    }
     implementation("${libs.vortex.jni.get().module}:${libs.vortex.jni.get().version}:all")
 
     implementation("${libs.orc.core.get().module}:${libs.versions.orc.get()}:nohive") {
@@ -311,7 +314,10 @@ project(":iceberg-spark:iceberg-spark-runtime-${sparkMajorVersion}_${scalaVersio
     relocate 'org.apache.hc.core5', 'org.apache.iceberg.shaded.org.apache.hc.core5'
     // relocate Arrow and related deps to shade Iceberg specific version
     relocate 'io.netty', 'org.apache.iceberg.shaded.io.netty'
-    relocate 'org.apache.arrow', 'org.apache.iceberg.shaded.org.apache.arrow'
+    relocate('org.apache.arrow', 'org.apache.iceberg.shaded.org.apache.arrow') {
+      exclude("org/apache/arrow/c/jni/*")
+      exclude("org/apache/arrow/c/ArrayStreamExporter\$ExportedArrayStreamPrivateData")
+    }
     relocate 'com.carrotsearch', 'org.apache.iceberg.shaded.com.carrotsearch'
     relocate 'org.threeten.extra', 'org.apache.iceberg.shaded.org.threeten.extra'
     relocate 'org.roaringbitmap', 'org.apache.iceberg.shaded.org.roaringbitmap'

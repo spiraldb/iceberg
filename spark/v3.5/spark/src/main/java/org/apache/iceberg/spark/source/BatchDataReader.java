@@ -88,7 +88,7 @@ class BatchDataReader extends BaseBatchReader<FileScanTask>
         parquetConf,
         orcConf,
         vortexConf,
-        vortexConf);
+        cacheDeleteFilesOnExecutors);
 
     numSplits = taskGroup.tasks().size();
     LOG.debug("Reading {} file split(s) for table {}", numSplits, table.name());

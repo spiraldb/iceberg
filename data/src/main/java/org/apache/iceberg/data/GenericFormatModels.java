@@ -25,9 +25,11 @@ import org.apache.iceberg.data.orc.GenericOrcReader;
 import org.apache.iceberg.data.orc.GenericOrcWriter;
 import org.apache.iceberg.data.parquet.GenericParquetReaders;
 import org.apache.iceberg.data.parquet.GenericParquetWriter;
+import org.apache.iceberg.data.vortex.GenericVortexReader;
 import org.apache.iceberg.formats.FormatModelRegistry;
 import org.apache.iceberg.orc.ORCFormatModel;
 import org.apache.iceberg.parquet.ParquetFormatModel;
+import org.apache.iceberg.vortex.VortexFormatModel;
 
 public class GenericFormatModels {
   public static void register() {
@@ -62,6 +64,9 @@ public class GenericFormatModels {
                 GenericOrcReader.buildReader(icebergSchema, fileSchema, idToConstant)));
 
     FormatModelRegistry.register(ORCFormatModel.forPositionDeletes());
+
+    FormatModelRegistry.register(
+        VortexFormatModel.forRowReader(Record.class, Void.class, GenericVortexReader::buildReader));
   }
 
   private GenericFormatModels() {}
