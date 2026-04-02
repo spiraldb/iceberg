@@ -29,6 +29,7 @@ import org.apache.iceberg.spark.data.SparkParquetReaders;
 import org.apache.iceberg.spark.data.SparkParquetWriters;
 import org.apache.iceberg.spark.data.SparkPlannedAvroReader;
 import org.apache.iceberg.spark.data.SparkVortexReader;
+import org.apache.iceberg.spark.data.SparkVortexWriter;
 import org.apache.iceberg.spark.data.vectorized.VectorizedSparkOrcReaders;
 import org.apache.iceberg.spark.data.vectorized.VectorizedSparkParquetReaders;
 import org.apache.iceberg.spark.data.vectorized.VectorizedSparkVortexReaders;
@@ -80,13 +81,19 @@ public class SparkFormatModels {
             (icebergSchema, fileSchema, engineSchema, idToConstant) ->
                 VectorizedSparkOrcReaders.buildReader(icebergSchema, fileSchema, idToConstant)));
     FormatModelRegistry.register(
-        VortexFormatModel.forRowReader(
-            InternalRow.class, StructType.class, SparkVortexReader::new));
+        VortexFormatModel.create(
+            InternalRow.class,
+            StructType.class,
+            (icebergSchema, fileSchema, engineSchema) ->
+                SparkVortexWriter.buildWriter(icebergSchema),
+            SparkVortexReader::new));
 
     FormatModelRegistry.register(
-        VortexFormatModel.forBatchReader(
+        VortexFormatModel.create(
             ColumnarBatch.class,
             StructType.class,
+            (icebergSchema, fileSchema, engineSchema) ->
+                SparkVortexWriter.buildWriter(icebergSchema),
             VectorizedSparkVortexReaders::buildReader));
   }
 

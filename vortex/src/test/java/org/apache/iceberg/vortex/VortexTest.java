@@ -30,6 +30,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.data.vortex.GenericVortexReader;
+import org.apache.iceberg.data.vortex.GenericVortexWriter;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.SeekableInputStream;
@@ -52,7 +53,12 @@ public final class VortexTest {
     InputFile inputFile = loadResourceFile("employees.vortex", tempDir);
 
     try (CloseableIterable<Record> records =
-        VortexFormatModel.forRowReader(Record.class, Void.class, GenericVortexReader::buildReader)
+        VortexFormatModel.create(
+                Record.class,
+                Void.class,
+                (icebergSchema, fileSchema, engineSchema) ->
+                    GenericVortexWriter.buildWriter(icebergSchema),
+                (VortexFormatModel.ReaderFunction<Record>) GenericVortexReader::buildReader)
             .readBuilder(inputFile)
             .project(EMPLOYEE_SCHEMA)
             .build()) {

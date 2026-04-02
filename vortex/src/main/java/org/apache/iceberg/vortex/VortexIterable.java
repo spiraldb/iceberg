@@ -30,10 +30,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.expressions.Expression;
-import org.apache.iceberg.hadoop.HadoopInputFile;
 import org.apache.iceberg.io.CloseableGroup;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.CloseableIterator;
@@ -125,87 +123,9 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   private static File newVortexFile(InputFile inputFile) {
     LOG.debug("opening Vortex file: {}", inputFile);
 
-    URI uriLocation = URI.create(inputFile.location());
-    return switch (uriLocation.getScheme()) {
-      case "s3a":
-        Preconditions.checkArgument(
-            inputFile instanceof HadoopInputFile, "Vortex only supports HadoopInputFile currently");
-        HadoopInputFile hadoopInputFile = (HadoopInputFile) inputFile;
-        yield Files.open(uriLocation, s3PropertiesFromHadoopConf(hadoopInputFile.getConf()));
-      case "wasb":
-      case "wasbs":
-      case "abfs":
-      case "abfss":
-        Preconditions.checkArgument(
-            inputFile instanceof HadoopInputFile, "Vortex only supports HadoopInputFile currently");
-        HadoopInputFile hfi = (HadoopInputFile) inputFile;
-        yield Files.open(uriLocation, azurePropertiesFromHadoopConf(hfi.getConf()));
-      case "file":
-        yield Files.open(uriLocation, Map.of());
-      default:
-        throw new IllegalArgumentException("Unsupported scheme: " + uriLocation.getScheme());
-    };
-  }
-
-  static final String FS_S3A_ACCESS_KEY = "fs.s3a.access.key";
-  static final String FS_S3A_SECRET_KEY = "fs.s3a.secret.key";
-  static final String FS_S3A_SESSION_TOKEN = "fs.s3a.session.token";
-  static final String FS_S3A_ENDPOINT = "fs.s3a.endpoint";
-  static final String FS_S3A_ENDPOINT_REGION = "fs.s3a.endpoint.region";
-
-  private static Map<String, String> s3PropertiesFromHadoopConf(Configuration hadoopConf) {
-    VortexS3Properties properties = new VortexS3Properties();
-
-    for (Map.Entry<String, String> entry : hadoopConf) {
-      switch (entry.getKey()) {
-        case FS_S3A_ACCESS_KEY:
-          properties.setAccessKeyId(entry.getValue());
-          break;
-        case FS_S3A_SECRET_KEY:
-          properties.setSecretAccessKey(entry.getValue());
-          break;
-        case FS_S3A_SESSION_TOKEN:
-          properties.setSessionToken(entry.getValue());
-          break;
-        case FS_S3A_ENDPOINT:
-          String qualified = entry.getValue();
-          if (!qualified.startsWith("http")) {
-            qualified = "https://" + qualified;
-          }
-          properties.setEndpoint(qualified);
-          break;
-        case FS_S3A_ENDPOINT_REGION:
-          properties.setRegion(entry.getValue());
-          break;
-        default:
-          LOG.trace(
-              "Ignoring unknown s3a connector property: {}={}", entry.getKey(), entry.getValue());
-          break;
-      }
-    }
-
-    return properties.asProperties();
-  }
-
-  static final String ACCESS_KEY_PREFIX = "fs.azure.account.key";
-  static final String FIXED_TOKEN_PREFIX = "fs.azure.sas.fixed.token.";
-
-  private static Map<String, String> azurePropertiesFromHadoopConf(Configuration hadoopConf) {
-    VortexAzureProperties properties = new VortexAzureProperties();
-
-    // TODO(aduffy): match on storage account name.
-    for (Map.Entry<String, String> entry : hadoopConf) {
-      String configKey = entry.getKey();
-      if (configKey.startsWith(ACCESS_KEY_PREFIX)) {
-        properties.setAccessKey(entry.getValue());
-      } else if (configKey.startsWith(FIXED_TOKEN_PREFIX)) {
-        properties.setSasKey(entry.getValue());
-      } else {
-        LOG.trace("Ignoring unknown azure connector property: {}={}", configKey, entry.getValue());
-      }
-    }
-
-    return properties.asProperties();
+    URI uriLocation = URI.create(VortexFileUtil.resolveUri(inputFile.location()));
+    Map<String, String> properties = VortexFileUtil.resolveInputProperties(inputFile);
+    return Files.open(uriLocation, properties);
   }
 
   static class VortexRowIterator<T> extends CloseableGroup implements CloseableIterator<T> {
