@@ -936,8 +936,8 @@ project(':iceberg-vortex') {
     useJUnitPlatform()
   }
   dependencies {
-    implementation project(path: ':iceberg-bundled-guava', configuration: 'shadow')
     api project(':iceberg-api')
+    implementation project(path: ':iceberg-bundled-guava', configuration: 'shadow')
     implementation project(':iceberg-core')
     implementation project(':iceberg-common')
     implementation(libs.vortex.jni) {
@@ -948,11 +948,6 @@ project(':iceberg-vortex') {
       exclude group: 'io.netty', module: 'netty-common'
       exclude group: 'com.google.code.findbugs', module: 'jsr305'
     }
-    implementation(libs.arrow.memory.netty) {
-      exclude group: 'com.google.code.findbugs', module: 'jsr305'
-      exclude group: 'io.netty', module: 'netty-common'
-      exclude group: 'io.netty', module: 'netty-buffer'
-    }
 
     annotationProcessor libs.immutables.value
     compileOnly libs.immutables.value
@@ -960,6 +955,7 @@ project(':iceberg-vortex') {
       exclude group: 'org.apache.avro', module: 'avro'
     }
 
+    testImplementation libs.arrow.memory.netty
     testImplementation libs.hadoop3.common
   }
 }
