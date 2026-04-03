@@ -240,8 +240,8 @@ public final class VortexSchemas {
     }
   }
 
-  private static Type toIcebergType(DType data_type) {
-    switch (data_type.getVariant()) {
+  private static Type toIcebergType(DType dataType) {
+    switch (dataType.getVariant()) {
       case NULL:
         return Types.UnknownType.get();
       case BOOL:
@@ -261,14 +261,14 @@ public final class VortexSchemas {
       case PRIMITIVE_F64:
         return Types.DoubleType.get();
       case DECIMAL:
-        return Types.DecimalType.of(data_type.getPrecision(), data_type.getScale());
+        return Types.DecimalType.of(dataType.getPrecision(), dataType.getScale());
       case UTF8:
         return Types.StringType.get();
       case BINARY:
         return Types.BinaryType.get();
       case LIST:
         {
-          DType elementType = data_type.getElementType();
+          DType elementType = dataType.getElementType();
           Type innerType = toIcebergType(elementType);
           if (elementType.isNullable()) {
             return Types.ListType.ofOptional(0, innerType);
@@ -278,25 +278,25 @@ public final class VortexSchemas {
         }
       case EXTENSION:
         {
-          if (data_type.isDate()) {
+          if (dataType.isDate()) {
             return Types.DateType.get();
-          } else if (data_type.isTime()) {
+          } else if (dataType.isTime()) {
             return Types.TimeType.get();
-          } else if (data_type.isTimestamp()) {
-            if (data_type.getTimeZone().isPresent()) {
+          } else if (dataType.isTimestamp()) {
+            if (dataType.getTimeZone().isPresent()) {
               return Types.TimestampType.withZone();
             } else {
               return Types.TimestampType.withoutZone();
             }
           } else {
             throw new UnsupportedOperationException(
-                "Unsupported Vortex extension type: " + data_type);
+                "Unsupported Vortex extension type: " + dataType);
           }
         }
         // TODO(aduffy): add nested struct support
       default:
         throw new UnsupportedOperationException(
-            "Unsupported data type in Vortex -> Iceberg conversion: " + data_type.getVariant());
+            "Unsupported data type in Vortex -> Iceberg conversion: " + dataType.getVariant());
     }
   }
 }

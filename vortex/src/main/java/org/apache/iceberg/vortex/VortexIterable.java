@@ -80,14 +80,14 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
               return ConvertFilterToVortex.convert(fileSchema, icebergExpression);
             });
 
-    Optional<long[]> rowRange = Optional.ofNullable(this.rowRange);
+    Optional<long[]> optRange = Optional.ofNullable(this.rowRange);
 
     ArrayIterator batchStream =
         vortexFile.newScan(
             ScanOptions.builder()
                 .addAllColumns(projection)
                 .predicate(scanPredicate)
-                .rowRange(rowRange)
+                .rowRange(optRange)
                 .build());
     Preconditions.checkNotNull(batchStream, "batchStream");
 

@@ -957,6 +957,7 @@ project(':iceberg-vortex') {
 
     testImplementation libs.arrow.memory.netty
     testImplementation libs.hadoop3.common
+    testRuntimeOnly 'com.google.protobuf:protobuf-java:4.33.5'
   }
 }
 
