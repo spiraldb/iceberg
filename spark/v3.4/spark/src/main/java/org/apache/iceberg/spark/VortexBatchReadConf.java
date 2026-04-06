@@ -23,10 +23,10 @@ import org.immutables.value.Value;
 
 @Value.Immutable
 public interface VortexBatchReadConf extends Serializable {
-    /**
-     * Size (row count) of the batch.
-     *
-     * <p>This is advisory and may not be respected by the implementation.
-     */
-    int batchSize();
+  /**
+   * Size (row count) of the batch.
+   *
+   * <p>This is advisory and may not be respected by the implementation.
+   */
+  int batchSize();
 }
