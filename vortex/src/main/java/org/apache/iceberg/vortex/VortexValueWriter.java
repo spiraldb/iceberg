@@ -16,17 +16,24 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.spark;
+package org.apache.iceberg.vortex;
 
-import java.io.Serializable;
-import org.immutables.value.Value;
+import org.apache.arrow.vector.VectorSchemaRoot;
 
-@Value.Immutable
-public interface VortexBatchReadConf extends Serializable {
+/**
+ * Interface for writing a datum of type {@code D} into Arrow vectors for Vortex file output.
+ *
+ * <p>Implementations are engine-specific: the generic data path writes {@code Record} objects,
+ * while Spark writes {@code InternalRow} objects.
+ *
+ * @param <D> the type of data to write
+ */
+public interface VortexValueWriter<D> {
   /**
-   * Size (row count) of the batch.
+   * Write a single datum into the Arrow {@link VectorSchemaRoot} at the given row index.
    *
-   * <p>This is advisory and may not be respected by the implementation.
+   * <p>The caller manages the {@link VectorSchemaRoot} lifecycle and ensures vectors have been
+   * allocated with sufficient capacity.
    */
-  int batchSize();
+  void write(D datum, VectorSchemaRoot root, int rowIndex);
 }
