@@ -146,10 +146,8 @@ public class TestVortexPartitionedWrites {
     int expectedDay1 = (int) LocalDate.of(2023, 6, 15).toEpochDay();
     int expectedDay2 = (int) LocalDate.of(2023, 7, 20).toEpochDay();
 
-    DataFile df1 =
-        writeVortexFile(schema, daySpec, expectedDay1, makeRecordTz(schema, 1L, day1));
-    DataFile df2 =
-        writeVortexFile(schema, daySpec, expectedDay2, makeRecordTz(schema, 2L, day2));
+    DataFile df1 = writeVortexFile(schema, daySpec, expectedDay1, makeRecordTz(schema, 1L, day1));
+    DataFile df2 = writeVortexFile(schema, daySpec, expectedDay2, makeRecordTz(schema, 2L, day2));
 
     assertThat(df1.partition().get(0, Integer.class)).isEqualTo(expectedDay1);
     assertThat(df2.partition().get(0, Integer.class)).isEqualTo(expectedDay2);
@@ -271,12 +269,10 @@ public class TestVortexPartitionedWrites {
     partition.set(0, partitionValue);
 
     File outFile = new File(tempDir, "data-" + (fileCounter++) + ".vortex");
-    EncryptedOutputFile encFile =
-        EncryptedFiles.plainAsEncryptedOutput(Files.localOutput(outFile));
+    EncryptedOutputFile encFile = EncryptedFiles.plainAsEncryptedOutput(Files.localOutput(outFile));
 
     DataWriter<Record> writer =
-        FormatModelRegistry.<Record, Void>dataWriteBuilder(
-                FileFormat.VORTEX, Record.class, encFile)
+        FormatModelRegistry.<Record, Void>dataWriteBuilder(FileFormat.VORTEX, Record.class, encFile)
             .schema(schema)
             .spec(spec)
             .partition(partition)

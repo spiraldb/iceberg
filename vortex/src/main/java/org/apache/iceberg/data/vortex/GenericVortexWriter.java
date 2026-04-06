@@ -185,9 +185,7 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
         return new DoubleMetricsTracker(field.fieldId());
       case DATE:
         return new ColumnMetricsTracker<Integer>(
-            field.fieldId(),
-            Comparator.naturalOrder(),
-            v -> (int) ((LocalDate) v).toEpochDay());
+            field.fieldId(), Comparator.naturalOrder(), v -> (int) ((LocalDate) v).toEpochDay());
       case TIME:
         return new ColumnMetricsTracker<Long>(
             field.fieldId(),
