@@ -26,11 +26,10 @@ import dev.vortex.spark.read.VortexArrowColumnVector;
 import dev.vortex.spark.read.VortexColumnarBatch;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.vortex.VortexBatchReader;
 import org.apache.spark.sql.vectorized.ColumnVector;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
@@ -62,7 +61,7 @@ public class VectorizedSparkVortexReaders {
     public ColumnarBatch read(Array batch) {
       this.root = batch.exportToArrow(ArrowAllocation.rootAllocator(), this.root);
       int rowCount = this.root.getRowCount();
-      TreeMap<Integer, ColumnVector> vectors = new TreeMap<>();
+      Map<Integer, ColumnVector> vectors = Maps.newHashMap();
 
       for (Map.Entry<Integer, ?> entry : idToConstant.entrySet()) {
         Integer fieldId = entry.getKey();
@@ -89,22 +88,6 @@ public class VectorizedSparkVortexReaders {
 
     // Mapping from Vortex schema index to Iceberg Field ID.
     static List<Integer> vortexSchemaMapping(Schema icebergSchema, DType vortexSchema) {
-      // The schema mapping allows us to map the vortex schema into positions in the
-      // return icebergSchema.
-      List<String> fieldNames = vortexSchema.getFieldNames();
-
-      // iceberg field id LUT
-      Integer[] fieldIds =
-          fieldNames.stream()
-              .map(name -> icebergSchema.findField(name).fieldId())
-              .toArray(Integer[]::new);
-
-      // Return all of the integers
-      IntStream.range(0, fieldNames.size())
-          .mapToObj(i -> i)
-          .sorted((i, j) -> fieldIds[i].compareTo(fieldIds[j]))
-          .map(idx -> fieldNames);
-
       return vortexSchema.getFieldNames().stream()
           .map(fieldName -> icebergSchema.findField(fieldName).fieldId())
           .collect(Collectors.toList());

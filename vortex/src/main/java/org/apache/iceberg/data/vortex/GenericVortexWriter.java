@@ -27,7 +27,9 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Stream;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
@@ -44,6 +46,7 @@ import org.apache.arrow.vector.TimeStampNanoVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.iceberg.FieldMetrics;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.types.Types;
@@ -57,9 +60,14 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
   private static final LocalDateTime LOCAL_EPOCH = LocalDateTime.of(1970, 1, 1, 0, 0, 0, 0);
 
   private final List<Types.NestedField> columns;
+  private final ColumnMetricsTracker<?>[] trackers;
 
   private GenericVortexWriter(Schema schema) {
     this.columns = schema.columns();
+    this.trackers = new ColumnMetricsTracker[columns.size()];
+    for (int i = 0; i < columns.size(); i++) {
+      trackers[i] = newTracker(columns.get(i));
+    }
   }
 
   public static VortexValueWriter<Record> buildWriter(Schema schema) {
@@ -67,19 +75,32 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
   }
 
   @Override
+  @SuppressWarnings("unchecked")
   public void write(Record datum, VectorSchemaRoot root, int rowIndex) {
     for (int fieldIndex = 0; fieldIndex < columns.size(); fieldIndex++) {
       Types.NestedField field = columns.get(fieldIndex);
       FieldVector vector = root.getVector(fieldIndex);
       Object value = datum.get(fieldIndex);
 
+      ColumnMetricsTracker<Object> tracker = (ColumnMetricsTracker<Object>) trackers[fieldIndex];
       if (value == null) {
         vector.setNull(rowIndex);
+        tracker.addNull();
         continue;
       }
 
+      tracker.addValue(value);
       writeValue(vector, field.type(), value, rowIndex);
     }
+  }
+
+  @Override
+  public Stream<FieldMetrics<?>> metrics() {
+    Stream.Builder<FieldMetrics<?>> builder = Stream.builder();
+    for (int i = 0; i < columns.size(); i++) {
+      builder.add(trackers[i].toFieldMetrics());
+    }
+    return builder.build();
   }
 
   @SuppressWarnings("CyclomaticComplexity")
@@ -152,6 +173,156 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
       default:
         throw new UnsupportedOperationException(
             "Unsupported Iceberg type for Vortex write: " + type);
+    }
+  }
+
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  private static ColumnMetricsTracker<?> newTracker(Types.NestedField field) {
+    switch (field.type().typeId()) {
+      case FLOAT:
+        return new FloatMetricsTracker(field.fieldId());
+      case DOUBLE:
+        return new DoubleMetricsTracker(field.fieldId());
+      case DATE:
+        return new ColumnMetricsTracker<Integer>(
+            field.fieldId(), Comparator.naturalOrder(), v -> (int) ((LocalDate) v).toEpochDay());
+      case TIME:
+        return new ColumnMetricsTracker<Long>(
+            field.fieldId(),
+            Comparator.naturalOrder(),
+            v -> ((LocalTime) v).getLong(java.time.temporal.ChronoField.MICRO_OF_DAY));
+      case TIMESTAMP:
+        Types.TimestampType tsType = (Types.TimestampType) field.type();
+        if (tsType.shouldAdjustToUTC()) {
+          return new ColumnMetricsTracker<Long>(
+              field.fieldId(),
+              Comparator.naturalOrder(),
+              v -> ChronoUnit.MICROS.between(EPOCH, (OffsetDateTime) v));
+        } else {
+          return new ColumnMetricsTracker<Long>(
+              field.fieldId(),
+              Comparator.naturalOrder(),
+              v -> ChronoUnit.MICROS.between(LOCAL_EPOCH, (LocalDateTime) v));
+        }
+      case TIMESTAMP_NANO:
+        Types.TimestampNanoType tsNanoType = (Types.TimestampNanoType) field.type();
+        if (tsNanoType.shouldAdjustToUTC()) {
+          return new ColumnMetricsTracker<Long>(
+              field.fieldId(),
+              Comparator.naturalOrder(),
+              v -> ChronoUnit.NANOS.between(EPOCH, (OffsetDateTime) v));
+        } else {
+          return new ColumnMetricsTracker<Long>(
+              field.fieldId(),
+              Comparator.naturalOrder(),
+              v -> ChronoUnit.NANOS.between(LOCAL_EPOCH, (LocalDateTime) v));
+        }
+      default:
+        return new ColumnMetricsTracker<>(field.fieldId(), (Comparator) Comparator.naturalOrder());
+    }
+  }
+
+  /**
+   * Tracks per-column metrics during writes: value count, null count, and min/max bounds using
+   * natural ordering. An optional converter transforms values to their internal representation
+   * (e.g., LocalDateTime to Long microseconds) before tracking bounds.
+   */
+  static class ColumnMetricsTracker<T> {
+    private final int fieldId;
+    private final Comparator<T> comparator;
+    private final java.util.function.Function<Object, T> converter;
+    private long valueCount;
+    private long nullCount;
+    private T min;
+    private T max;
+
+    ColumnMetricsTracker(int fieldId, Comparator<T> comparator) {
+      this(fieldId, comparator, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    ColumnMetricsTracker(
+        int fieldId, Comparator<T> comparator, java.util.function.Function<Object, T> converter) {
+      this.fieldId = fieldId;
+      this.comparator = comparator;
+      this.converter = converter;
+    }
+
+    void addNull() {
+      valueCount++;
+      nullCount++;
+    }
+
+    void incrementValueCount() {
+      valueCount++;
+    }
+
+    @SuppressWarnings("unchecked")
+    void addValue(Object value) {
+      valueCount++;
+      T typedValue = converter != null ? converter.apply(value) : (T) value;
+      if (min == null || comparator.compare(typedValue, min) < 0) {
+        min = typedValue;
+      }
+      if (max == null || comparator.compare(typedValue, max) > 0) {
+        max = typedValue;
+      }
+    }
+
+    FieldMetrics<?> toFieldMetrics() {
+      return new FieldMetrics<>(fieldId, valueCount, nullCount, nanValueCount(), min, max);
+    }
+
+    long nanValueCount() {
+      return -1;
+    }
+  }
+
+  /** Float-specific tracker that handles NaN values by excluding them from bounds. */
+  static class FloatMetricsTracker extends ColumnMetricsTracker<Float> {
+    private long nanCount;
+
+    FloatMetricsTracker(int fieldId) {
+      super(fieldId, Comparator.naturalOrder());
+    }
+
+    @Override
+    void addValue(Object value) {
+      if (Float.isNaN((Float) value)) {
+        incrementValueCount();
+        nanCount++;
+      } else {
+        super.addValue(value);
+      }
+    }
+
+    @Override
+    long nanValueCount() {
+      return nanCount;
+    }
+  }
+
+  /** Double-specific tracker that handles NaN values by excluding them from bounds. */
+  static class DoubleMetricsTracker extends ColumnMetricsTracker<Double> {
+    private long nanCount;
+
+    DoubleMetricsTracker(int fieldId) {
+      super(fieldId, Comparator.naturalOrder());
+    }
+
+    @Override
+    void addValue(Object value) {
+      if (Double.isNaN((Double) value)) {
+        incrementValueCount();
+        nanCount++;
+      } else {
+        super.addValue(value);
+      }
+    }
+
+    @Override
+    long nanValueCount() {
+      return nanCount;
     }
   }
 }

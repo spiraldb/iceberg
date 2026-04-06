@@ -22,7 +22,6 @@ import dev.vortex.api.DType;
 import dev.vortex.api.VortexWriter;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -43,6 +42,7 @@ import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Types;
 
 public class VortexFormatModel<D, S, R>
@@ -118,8 +118,9 @@ public class VortexFormatModel<D, S, R>
     private org.apache.iceberg.Schema schema;
     private S engineSchema;
     private FileContent content;
-    private final Map<String, String> writerProperties = new HashMap<>();
-    private final Map<String, String> metadata = new HashMap<>();
+    private MetricsConfig metricsConfig = MetricsConfig.getDefault();
+    private final Map<String, String> writerProperties = Maps.newHashMap();
+    private final Map<String, String> metadata = Maps.newHashMap();
 
     private WriteBuilderWrapper(
         EncryptedOutputFile outputFile,
@@ -171,8 +172,8 @@ public class VortexFormatModel<D, S, R>
     }
 
     @Override
-    public ModelWriteBuilder<D, S> metricsConfig(MetricsConfig metricsConfig) {
-      // Vortex does not yet support fine-grained metrics configuration
+    public ModelWriteBuilder<D, S> metricsConfig(MetricsConfig newMetricsConfig) {
+      this.metricsConfig = newMetricsConfig;
       return this;
     }
 
@@ -217,7 +218,7 @@ public class VortexFormatModel<D, S, R>
       OutputFile rawOutputFile = outputFile.encryptingOutputFile();
       String uri = VortexFileUtil.resolveUri(rawOutputFile.location());
       Map<String, String> properties =
-          new HashMap<>(VortexFileUtil.resolveOutputProperties(rawOutputFile));
+          Maps.newHashMap(VortexFileUtil.resolveOutputProperties(rawOutputFile));
       properties.putAll(metadata);
 
       VortexWriter vortexWriter = VortexWriter.create(uri, dtype, properties);
@@ -226,7 +227,9 @@ public class VortexFormatModel<D, S, R>
           valueWriter,
           arrowSchema,
           VortexFileAppender.DEFAULT_BATCH_SIZE,
-          rawOutputFile);
+          rawOutputFile,
+          writeSchema,
+          metricsConfig);
     }
   }
 

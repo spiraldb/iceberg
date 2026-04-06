@@ -29,6 +29,7 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.expressions.BoundPredicate;
@@ -49,6 +50,7 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
   private static final Expression ALWAYS_TRUE = Literal.bool(true);
   private static final Expression ALWAYS_FALSE = Literal.bool(false);
 
+  private static final int SET_PREDICATE_LIMIT = 200;
   private static final boolean CASE_SENSITIVE = true;
 
   private final Schema fileSchema;
@@ -133,8 +135,15 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
     } else if (pred.isUnaryPredicate()) {
       GetItem vortexTerm = GetItem.of(Root.INSTANCE, term.ref().field().name());
       return fromUnaryPredicate(pred.op(), vortexTerm);
+    } else if (pred.isSetPredicate()) {
+      Set<T> literalSet = pred.asSetPredicate().literalSet();
+      if (literalSet.size() > SET_PREDICATE_LIMIT) {
+        return UnconvertibleExpr.INSTANCE;
+      }
+
+      GetItem vortexTerm = GetItem.of(Root.INSTANCE, term.ref().field().name());
+      return fromSetPredicate(pred.op(), vortexTerm, literalSet, term.type());
     } else {
-      // Set predicates are not supported currently.
       return UnconvertibleExpr.INSTANCE;
     }
   }
@@ -274,6 +283,62 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
         }
       default:
         return ALWAYS_TRUE;
+    }
+  }
+
+  <T> Expression fromSetPredicate(
+      org.apache.iceberg.expressions.Expression.Operation op,
+      GetItem term,
+      Set<T> literalSet,
+      Type termType) {
+    Expression[] eqExprs =
+        literalSet.stream()
+            .map(value -> (Expression) Binary.eq(term, toVortexValue(value, termType)))
+            .toArray(Expression[]::new);
+
+    switch (op) {
+      case IN:
+        return Binary.or(eqExprs[0], java.util.Arrays.copyOfRange(eqExprs, 1, eqExprs.length));
+      case NOT_IN:
+        return Not.of(
+            Binary.or(eqExprs[0], java.util.Arrays.copyOfRange(eqExprs, 1, eqExprs.length)));
+      default:
+        return UnconvertibleExpr.INSTANCE;
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private <T> Literal<?> toVortexValue(T value, Type termType) {
+    switch (termType.typeId()) {
+      case BOOLEAN:
+        return Literal.bool((Boolean) value);
+      case INTEGER:
+        return Literal.int32((Integer) value);
+      case LONG:
+        return Literal.int64((Long) value);
+      case FLOAT:
+        return Literal.float32((Float) value);
+      case DOUBLE:
+        return Literal.float64((Double) value);
+      case DECIMAL:
+        Types.DecimalType decimalType = (Types.DecimalType) termType;
+        return Literal.decimal((BigDecimal) value, decimalType.precision(), decimalType.scale());
+      case STRING:
+        CharSequence charSequence = (CharSequence) value;
+        return Literal.string(charSequence.toString());
+      case DATE:
+        return Literal.dateDays((Integer) value);
+      case TIME:
+        return Literal.timeMicros((Long) value);
+      case TIMESTAMP:
+        Types.TimestampType timestampType = (Types.TimestampType) termType;
+        if (timestampType.shouldAdjustToUTC()) {
+          throw new UnsupportedOperationException(
+              "Handling of timestamps with timezones not yet supported");
+        }
+        return Literal.timestampMicros((Long) value, Optional.empty());
+      default:
+        throw new UnsupportedOperationException("Unsupported type for set predicate: " + termType);
     }
   }
 
