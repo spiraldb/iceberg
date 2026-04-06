@@ -208,8 +208,8 @@ public class TestVortexMetrics {
     Schema doubleSchema = new Schema(required(1, "val", Types.DoubleType.get()));
     VortexValueWriter<Record> writer = GenericVortexWriter.buildWriter(doubleSchema);
 
-    GenericRecord r = GenericRecord.create(doubleSchema);
-    r.set(0, Double.NaN);
+    GenericRecord record = GenericRecord.create(doubleSchema);
+    record.set(0, Double.NaN);
     // write directly through tracker, not through VectorSchemaRoot
     // Just test FieldMetrics directly
     FieldMetrics<Double> fieldMetrics = new FieldMetrics<>(1, 2, 0, 2L, null, null);

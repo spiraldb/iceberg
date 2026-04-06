@@ -228,13 +228,13 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
    * (e.g., LocalDateTime to Long microseconds) before tracking bounds.
    */
   static class ColumnMetricsTracker<T> {
-    final int fieldId;
-    final Comparator<T> comparator;
-    final java.util.function.Function<Object, T> converter;
-    long valueCount;
-    long nullCount;
-    T min;
-    T max;
+    private final int fieldId;
+    private final Comparator<T> comparator;
+    private final java.util.function.Function<Object, T> converter;
+    private long valueCount;
+    private long nullCount;
+    private T min;
+    private T max;
 
     ColumnMetricsTracker(int fieldId, Comparator<T> comparator) {
       this(fieldId, comparator, null);
@@ -251,6 +251,10 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
     void addNull() {
       valueCount++;
       nullCount++;
+    }
+
+    void incrementValueCount() {
+      valueCount++;
     }
 
     @SuppressWarnings("unchecked")
@@ -285,7 +289,7 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
     @Override
     void addValue(Object value) {
       if (Float.isNaN((Float) value)) {
-        valueCount++;
+        incrementValueCount();
         nanCount++;
       } else {
         super.addValue(value);
@@ -309,7 +313,7 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
     @Override
     void addValue(Object value) {
       if (Double.isNaN((Double) value)) {
-        valueCount++;
+        incrementValueCount();
         nanCount++;
       } else {
         super.addValue(value);
