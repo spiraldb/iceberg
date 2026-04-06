@@ -30,14 +30,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.deletes.ByteSlice;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.io.CloseableGroup;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
-import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Types;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +50,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   private final InputFile inputFile;
   private final Optional<Expression> filterPredicate;
   private final long[] rowRange;
+  private final ByteSlice posDeleteBitmap;
   private final Function<DType, VortexRowReader<T>> rowReaderFunc;
   private final Function<DType, VortexBatchReader<T>> batchReaderFunction;
   private final List<String> projection;
@@ -57,13 +60,20 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
       Schema icebergSchema,
       Optional<Expression> filterPredicate,
       long[] rowRange,
+      ByteSlice posDeleteBitmap,
       Function<DType, VortexRowReader<T>> readerFunction,
       Function<DType, VortexBatchReader<T>> batchReaderFunction) {
     this.inputFile = inputFile;
-    // We have the file schema, we need to assign Iceberg IDs to the entire file schema
-    this.projection = Lists.transform(icebergSchema.columns(), Types.NestedField::name);
+    // Strip metadata columns (e.g. _pos, _deleted) from the projection sent to the Vortex scan,
+    // since these are computed columns that don't exist in the physical file.
+    this.projection =
+        icebergSchema.columns().stream()
+            .filter(field -> !MetadataColumns.isMetadataColumn(field.fieldId()))
+            .map(Types.NestedField::name)
+            .collect(Collectors.toList());
     this.filterPredicate = filterPredicate;
     this.rowRange = rowRange;
+    this.posDeleteBitmap = posDeleteBitmap;
     this.rowReaderFunc = readerFunction;
     this.batchReaderFunction = batchReaderFunction;
   }
@@ -82,13 +92,18 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
     Optional<long[]> optRange = Optional.ofNullable(this.rowRange);
 
-    ArrayIterator batchStream =
-        vortexFile.newScan(
-            ScanOptions.builder()
-                .addAllColumns(projection)
-                .predicate(scanPredicate)
-                .rowRange(optRange)
-                .build());
+    ScanOptions.Builder scanBuilder =
+        ScanOptions.builder()
+            .addAllColumns(projection)
+            .predicate(scanPredicate)
+            .rowRange(optRange);
+
+    if (posDeleteBitmap != null) {
+      scanBuilder.deletePositions(
+          posDeleteBitmap.data(), posDeleteBitmap.offset(), posDeleteBitmap.length());
+    }
+
+    ArrayIterator batchStream = vortexFile.newScan(scanBuilder.build());
     Preconditions.checkNotNull(batchStream, "batchStream");
 
     DType dtype = batchStream.getDataType();

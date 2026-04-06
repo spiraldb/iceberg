@@ -113,6 +113,19 @@ public interface PositionDeleteIndex {
     return BitmapPositionDeleteIndex.deserialize(bytes, deleteFile);
   }
 
+  /**
+   * Extracts the raw portable Roaring bitmap bytes from an Iceberg deletion vector envelope,
+   * validating the magic number and CRC. Returns a zero-copy {@link ByteSlice} pointing into the
+   * original byte array.
+   *
+   * @param bytes the full DV blob (length + magic + bitmap + CRC)
+   * @param deleteFile the DV file for validation
+   * @return a slice over the raw Roaring bitmap bytes (little-endian, portable format)
+   */
+  static ByteSlice extractRoaringBitmap(byte[] bytes, DeleteFile deleteFile) {
+    return BitmapPositionDeleteIndex.extractRoaringBitmap(bytes, deleteFile);
+  }
+
   /** Returns an empty immutable position delete index. */
   static PositionDeleteIndex empty() {
     return EmptyPositionDeleteIndex.get();

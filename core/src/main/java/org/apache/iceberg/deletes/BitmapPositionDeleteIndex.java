@@ -154,6 +154,39 @@ class BitmapPositionDeleteIndex implements PositionDeleteIndex {
     return new BitmapPositionDeleteIndex(bitmap, deleteFile);
   }
 
+  /**
+   * Extracts the raw Roaring bitmap bytes from the envelope, validating magic and CRC. Returns a
+   * zero-copy {@link ByteSlice} pointing into the original byte array.
+   *
+   * <p>Envelope format: [4B length BE][4B magic LE][roaring LE][4B CRC BE]
+   *
+   * <p>Returns a slice over just the "roaring" portion.
+   */
+  static ByteSlice extractRoaringBitmap(byte[] bytes, DeleteFile deleteFile) {
+    ByteBuffer buffer = ByteBuffer.wrap(bytes);
+    int bitmapDataLength = readBitmapDataLength(buffer, deleteFile);
+
+    // validate CRC
+    int crc = computeChecksum(bytes, bitmapDataLength);
+    int crcOffset = LENGTH_SIZE_BYTES + bitmapDataLength;
+    int expectedCrc = buffer.getInt(crcOffset);
+    Preconditions.checkArgument(crc == expectedCrc, "Invalid CRC");
+
+    // validate magic
+    ByteBuffer bitmapData = pointToBitmapData(bytes, bitmapDataLength);
+    int magicNumber = bitmapData.getInt();
+    Preconditions.checkArgument(
+        magicNumber == MAGIC_NUMBER,
+        "Invalid magic number: %s, expected %s",
+        magicNumber,
+        MAGIC_NUMBER);
+
+    // the Roaring bytes start right after the magic, and run to end of bitmap data
+    int roaringOffset = LENGTH_SIZE_BYTES + MAGIC_NUMBER_SIZE_BYTES;
+    int roaringLength = bitmapDataLength - MAGIC_NUMBER_SIZE_BYTES;
+    return new ByteSlice(bytes, roaringOffset, roaringLength);
+  }
+
   // computes and validates the length of the bitmap data (magic bytes + bitmap)
   private static int computeBitmapDataLength(RoaringPositionBitmap bitmap) {
     long length = MAGIC_NUMBER_SIZE_BYTES + bitmap.serializedSizeInBytes();

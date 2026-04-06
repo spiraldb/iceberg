@@ -20,6 +20,7 @@ package org.apache.iceberg.formats;
 
 import java.util.Map;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.deletes.ByteSlice;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.mapping.NameMapping;
@@ -118,6 +119,19 @@ public interface ReadBuilder<D, S> {
 
   /** Sets a mapping from external schema names to Iceberg type IDs. */
   ReadBuilder<D, S> withNameMapping(NameMapping nameMapping);
+
+  /**
+   * Pushes position deletes into the reader so that deleted rows are excluded during scanning. The
+   * bitmap is a portable Roaring bitmap (little-endian) where each set bit represents a deleted row
+   * position. Formats that support this can skip deleted rows at the scan level rather than
+   * filtering them after the fact. Formats that do not support this can safely ignore the bitmap.
+   *
+   * @param bitmap a slice over portable Roaring bitmap bytes representing deleted row positions
+   * @return this for method chaining
+   */
+  default ReadBuilder<D, S> positionDeleteBitmap(ByteSlice bitmap) {
+    return this;
+  }
 
   /** Builds the reader. */
   CloseableIterable<D> build();

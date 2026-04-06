@@ -31,12 +31,15 @@ import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.iceberg.FileContent;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.MetricsConfig;
+import org.apache.iceberg.data.vortex.PositionDeleteVortexWriter;
+import org.apache.iceberg.deletes.PositionDelete;
 import org.apache.iceberg.encryption.EncryptedOutputFile;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.formats.BaseFormatModel;
 import org.apache.iceberg.formats.ModelWriteBuilder;
 import org.apache.iceberg.formats.ReadBuilder;
 import org.apache.iceberg.io.CloseableIterable;
+import org.apache.iceberg.io.DeleteSchemaUtil;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.OutputFile;
@@ -71,6 +74,12 @@ public class VortexFormatModel<D, S, R>
         (icebergSchema, fileSchema, engineSchema, idToConstant) ->
             readerFunction.read(icebergSchema, fileSchema, idToConstant),
         false);
+  }
+
+  public static <D> VortexFormatModel<PositionDelete<D>, Void, VortexRowReader<?>>
+      forPositionDeletes() {
+    return new VortexFormatModel<>(
+        PositionDelete.deleteClass(), Void.class, null, null, false);
   }
 
   public static <D, S> VortexFormatModel<D, S, VortexBatchReader<?>> create(
@@ -195,15 +204,41 @@ public class VortexFormatModel<D, S, R>
 
     @Override
     public FileAppender<D> build() throws IOException {
-      Preconditions.checkNotNull(schema, "Schema is required");
       Preconditions.checkNotNull(content, "Content type is required");
 
       return switch (content) {
-        case DATA, EQUALITY_DELETES -> buildAppender(schema);
-        case POSITION_DELETES ->
-            throw new UnsupportedOperationException(
-                "Position deletes are not yet supported for Vortex format");
+        case DATA, EQUALITY_DELETES -> {
+          Preconditions.checkNotNull(schema, "Schema is required");
+          yield buildAppender(schema);
+        }
+        case POSITION_DELETES -> buildPosDeleteAppender();
       };
+    }
+
+    @SuppressWarnings("unchecked")
+    private FileAppender<D> buildPosDeleteAppender() throws IOException {
+      org.apache.iceberg.Schema posDeleteSchema = DeleteSchemaUtil.pathPosSchema();
+      DType dtype = VortexSchemas.toDType(posDeleteSchema);
+      Schema arrowSchema = VortexSchemas.toArrowSchema(posDeleteSchema);
+
+      VortexValueWriter<D> valueWriter =
+          (VortexValueWriter<D>) new PositionDeleteVortexWriter<>();
+
+      OutputFile rawOutputFile = outputFile.encryptingOutputFile();
+      String uri = VortexFileUtil.resolveUri(rawOutputFile.location());
+      Map<String, String> properties =
+          Maps.newHashMap(VortexFileUtil.resolveOutputProperties(rawOutputFile));
+      properties.putAll(metadata);
+
+      VortexWriter vortexWriter = VortexWriter.create(uri, dtype, properties);
+      return new VortexFileAppender<>(
+          vortexWriter,
+          valueWriter,
+          arrowSchema,
+          VortexFileAppender.DEFAULT_BATCH_SIZE,
+          rawOutputFile,
+          posDeleteSchema,
+          metricsConfig);
     }
 
     @SuppressWarnings("unchecked")
@@ -242,6 +277,7 @@ public class VortexFormatModel<D, S, R>
     private Map<Integer, ?> idToConstant;
     private Optional<Expression> filterPredicate = Optional.empty();
     private long[] rowRange;
+    private org.apache.iceberg.deletes.ByteSlice posDeleteBitmap;
 
     private ReadBuilderWrapper(
         InputFile inputFile,
@@ -313,6 +349,12 @@ public class VortexFormatModel<D, S, R>
     }
 
     @Override
+    public ReadBuilder<D, S> positionDeleteBitmap(org.apache.iceberg.deletes.ByteSlice bitmap) {
+      this.posDeleteBitmap = bitmap;
+      return this;
+    }
+
+    @Override
     @SuppressWarnings("unchecked")
     public CloseableIterable<D> build() {
       Function<DType, VortexRowReader<D>> readerFunc = null;
@@ -340,7 +382,13 @@ public class VortexFormatModel<D, S, R>
       }
 
       return new VortexIterable<>(
-          inputFile, readSchema, filterPredicate, rowRange, readerFunc, batchReaderFunc);
+          inputFile,
+          readSchema,
+          filterPredicate,
+          rowRange,
+          posDeleteBitmap,
+          readerFunc,
+          batchReaderFunc);
     }
   }
 }
