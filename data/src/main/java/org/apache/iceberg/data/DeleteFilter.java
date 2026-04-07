@@ -24,11 +24,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.Optional;
 import org.apache.iceberg.Accessor;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.StructLike;
+import org.apache.iceberg.deletes.ByteSlice;
 import org.apache.iceberg.deletes.DeleteCounter;
 import org.apache.iceberg.deletes.Deletes;
 import org.apache.iceberg.deletes.PositionDeleteIndex;
@@ -65,6 +67,7 @@ public abstract class DeleteFilter<T> {
   private PositionDeleteIndex deleteRowPositions = null;
   private List<Predicate<T>> isInDeleteSets = null;
   private Predicate<T> eqDeleteRows = null;
+  private boolean posDeletesPushedDown = false;
 
   protected DeleteFilter(
       String filePath,
@@ -258,8 +261,31 @@ public abstract class DeleteFilter<T> {
     return deleteRowPositions;
   }
 
-  private CloseableIterable<T> applyPosDeletes(CloseableIterable<T> records) {
+  /**
+   * Returns the position deletes as a portable Roaring bitmap {@link ByteSlice} for pushdown into a
+   * format-native scanner. For deletion vectors this is zero-copy from the on-disk bytes. When this
+   * returns a non-empty value, position deletes are marked as handled and {@link
+   * #filter(CloseableIterable)} will not re-apply them.
+   */
+  public Optional<ByteSlice> bitmapBytes() {
     if (posDeletes.isEmpty()) {
+      return Optional.empty();
+    }
+
+    DeleteLoader loader = deleteLoader();
+    if (loader instanceof BaseDeleteLoader) {
+      ByteSlice slice = ((BaseDeleteLoader) loader).loadPositionDeleteBitmap(posDeletes, filePath);
+      if (slice != null) {
+        this.posDeletesPushedDown = true;
+        return Optional.of(slice);
+      }
+    }
+
+    return Optional.empty();
+  }
+
+  private CloseableIterable<T> applyPosDeletes(CloseableIterable<T> records) {
+    if (posDeletes.isEmpty() || posDeletesPushedDown) {
       return records;
     }
 

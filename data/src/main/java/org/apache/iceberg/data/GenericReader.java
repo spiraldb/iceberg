@@ -20,10 +20,12 @@ package org.apache.iceberg.data;
 
 import java.io.Serializable;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.iceberg.CombinedScanTask;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.TableScan;
+import org.apache.iceberg.deletes.ByteSlice;
 import org.apache.iceberg.expressions.Evaluator;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.Expressions;
@@ -66,7 +68,12 @@ class GenericReader implements Serializable {
     DeleteFilter<Record> deletes = new GenericDeleteFilter(io, task, tableSchema, projection);
     Schema readSchema = deletes.requiredSchema();
 
-    CloseableIterable<Record> records = openFile(task, readSchema);
+    // Try to extract position deletes as bitmap bytes for pushdown into the format reader.
+    // If the format supports it, position deletes are handled at scan level and the filter
+    // will skip re-applying them.
+    Optional<ByteSlice> bitmapBytes = deletes.bitmapBytes();
+
+    CloseableIterable<Record> records = openFile(task, readSchema, bitmapBytes.orElse(null));
     records = deletes.filter(records);
     records = applyResidual(records, readSchema, task.residual());
 
@@ -84,7 +91,8 @@ class GenericReader implements Serializable {
     return records;
   }
 
-  private CloseableIterable<Record> openFile(FileScanTask task, Schema fileProjection) {
+  private CloseableIterable<Record> openFile(
+      FileScanTask task, Schema fileProjection, ByteSlice posDeleteBitmap) {
     InputFile input = io.newInputFile(task.file());
     Map<Integer, ?> partition =
         PartitionUtil.constantsMap(task, IdentityPartitionConverters::convertConstant);
@@ -93,6 +101,10 @@ class GenericReader implements Serializable {
         FormatModelRegistry.readBuilder(task.file().format(), Record.class, input);
     if (reuseContainers) {
       builder = builder.reuseContainers();
+    }
+
+    if (posDeleteBitmap != null) {
+      builder = builder.positionDeleteBitmap(posDeleteBitmap);
     }
 
     return builder
