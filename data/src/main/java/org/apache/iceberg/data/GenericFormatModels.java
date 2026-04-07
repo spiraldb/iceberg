@@ -73,6 +73,8 @@ public class GenericFormatModels {
             (icebergSchema, fileSchema, engineSchema) ->
                 GenericVortexWriter.buildWriter(icebergSchema),
             (VortexFormatModel.ReaderFunction<Record>) GenericVortexReader::buildReader));
+
+    FormatModelRegistry.register(VortexFormatModel.forPositionDeletes());
   }
 
   private GenericFormatModels() {}

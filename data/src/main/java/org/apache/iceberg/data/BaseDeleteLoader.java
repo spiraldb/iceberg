@@ -20,6 +20,8 @@ package org.apache.iceberg.data;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -30,6 +32,7 @@ import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.StructLike;
+import org.apache.iceberg.deletes.ByteSlice;
 import org.apache.iceberg.deletes.Deletes;
 import org.apache.iceberg.deletes.PositionDeleteIndex;
 import org.apache.iceberg.deletes.PositionDeleteIndexUtil;
@@ -50,6 +53,7 @@ import org.apache.iceberg.util.ContentFileUtil;
 import org.apache.iceberg.util.StructLikeSet;
 import org.apache.iceberg.util.Tasks;
 import org.apache.iceberg.util.ThreadPools;
+import org.roaringbitmap.RoaringBitmap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -165,6 +169,54 @@ public class BaseDeleteLoader implements DeleteLoader {
       return readDV(dv);
     } else {
       return getOrReadPosDeletes(deleteFiles, filePath);
+    }
+  }
+
+  /**
+   * Loads position deletes and returns the deleted positions as a portable Roaring bitmap
+   * (little-endian, per the <a href="https://github.com/RoaringBitmap/RoaringFormatSpec">Roaring
+   * format spec</a>). For deletion vectors, the raw bitmap bytes are extracted directly from the
+   * file without deserializing, returned as a zero-copy {@link ByteSlice}. For position delete
+   * files, positions are loaded and a new bitmap is built.
+   *
+   * @param deleteFiles position delete files or a deletion vector
+   * @param filePath the data file path for which to load deletes
+   * @return a slice over portable Roaring bitmap bytes, or null if there are no deletes
+   */
+  public ByteSlice loadPositionDeleteBitmap(
+      Iterable<DeleteFile> deleteFiles, CharSequence filePath) {
+    if (ContentFileUtil.containsSingleDV(deleteFiles)) {
+      DeleteFile dv = Iterables.getOnlyElement(deleteFiles);
+      validateDV(dv, filePath);
+      return readDVBitmap(dv);
+    }
+
+    PositionDeleteIndex index = getOrReadPosDeletes(deleteFiles, filePath);
+    if (index == null || index.isEmpty()) {
+      return null;
+    }
+
+    RoaringBitmap bitmap = new RoaringBitmap();
+    index.forEach(pos -> bitmap.add((int) pos));
+    bitmap.runOptimize();
+    ByteBuffer buf = ByteBuffer.allocate(bitmap.serializedSizeInBytes());
+    buf.order(ByteOrder.LITTLE_ENDIAN);
+    bitmap.serialize(buf);
+    byte[] bytes = buf.array();
+    return new ByteSlice(bytes, 0, bytes.length);
+  }
+
+  private ByteSlice readDVBitmap(DeleteFile dv) {
+    LOG.trace("Reading DV bitmap bytes without deserializing {}", dv.location());
+    InputFile inputFile = loadInputFile.apply(dv);
+    long offset = dv.contentOffset();
+    int length = dv.contentSizeInBytes().intValue();
+    byte[] bytes = new byte[length];
+    try {
+      IOUtil.readFully(inputFile, offset, bytes, 0, length);
+      return PositionDeleteIndex.extractRoaringBitmap(bytes, dv);
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
     }
   }
 
