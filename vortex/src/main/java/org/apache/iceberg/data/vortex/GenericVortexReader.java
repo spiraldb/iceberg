@@ -104,23 +104,30 @@ public class GenericVortexReader implements VortexRowReader<Record> {
 
     @Override
     public VortexValueReader<?> primitive(Type.PrimitiveType iPrimitive, Field primField) {
-      ArrowType arrowType = primField.getType();
       if ((iPrimitive != null && iPrimitive.typeId() == Type.TypeID.UUID)
           || VortexSchemas.isUuidField(primField)) {
         return GenericVortexReaders.uuids();
-      } else if (arrowType instanceof ArrowType.Bool) {
-        return GenericVortexReaders.bools();
-      } else if (arrowType instanceof ArrowType.Int intType) {
+      }
+      ArrowType arrowType = primField.getType();
+      if (arrowType instanceof ArrowType.Int intType) {
         return intType.getBitWidth() <= Integer.SIZE
             ? GenericVortexReaders.ints()
             : GenericVortexReaders.longs();
       } else if (arrowType instanceof ArrowType.FloatingPoint fpType) {
-        return switch (fpType.getPrecision()) {
-          case SINGLE -> GenericVortexReaders.floats();
-          case DOUBLE -> GenericVortexReaders.doubles();
-          case HALF ->
-              throw new UnsupportedOperationException("Half-precision floats are not supported");
-        };
+        return floatingPointReader(fpType);
+      } else if (arrowType instanceof ArrowType.Date dateType) {
+        return GenericVortexReaders.date(dateType.getUnit() == DateUnit.MILLISECOND);
+      } else if (arrowType instanceof ArrowType.Time timeType) {
+        return GenericVortexReaders.time(timeType.getUnit() == TimeUnit.NANOSECOND);
+      } else if (arrowType instanceof ArrowType.Timestamp tsType) {
+        return timestampReader(tsType);
+      }
+      return simpleReader(arrowType);
+    }
+
+    private static VortexValueReader<?> simpleReader(ArrowType arrowType) {
+      if (arrowType instanceof ArrowType.Bool) {
+        return GenericVortexReaders.bools();
       } else if (arrowType instanceof ArrowType.Decimal) {
         return GenericVortexReaders.decimals();
       } else if (arrowType instanceof ArrowType.Utf8 || arrowType instanceof ArrowType.LargeUtf8) {
@@ -129,20 +136,26 @@ public class GenericVortexReader implements VortexRowReader<Record> {
           || arrowType instanceof ArrowType.LargeBinary
           || arrowType instanceof ArrowType.FixedSizeBinary) {
         return GenericVortexReaders.bytes();
-      } else if (arrowType instanceof ArrowType.Date dateType) {
-        return GenericVortexReaders.date(dateType.getUnit() == DateUnit.MILLISECOND);
-      } else if (arrowType instanceof ArrowType.Time timeType) {
-        return GenericVortexReaders.time(timeType.getUnit() == TimeUnit.NANOSECOND);
-      } else if (arrowType instanceof ArrowType.Timestamp tsType) {
-        boolean isNano = tsType.getUnit() == TimeUnit.NANOSECOND;
-        if (tsType.getTimezone() == null) {
-          return GenericVortexReaders.timestamp(isNano);
-        } else {
-          return GenericVortexReaders.timestampTz(tsType.getTimezone(), isNano);
-        }
       }
       throw new UnsupportedOperationException(
           "Unsupported Arrow type in Vortex read: " + arrowType);
+    }
+
+    private static VortexValueReader<?> floatingPointReader(ArrowType.FloatingPoint fpType) {
+      return switch (fpType.getPrecision()) {
+        case SINGLE -> GenericVortexReaders.floats();
+        case DOUBLE -> GenericVortexReaders.doubles();
+        case HALF ->
+            throw new UnsupportedOperationException("Half-precision floats are not supported");
+      };
+    }
+
+    private static VortexValueReader<?> timestampReader(ArrowType.Timestamp tsType) {
+      boolean isNano = tsType.getUnit() == TimeUnit.NANOSECOND;
+      if (tsType.getTimezone() == null) {
+        return GenericVortexReaders.timestamp(isNano);
+      }
+      return GenericVortexReaders.timestampTz(tsType.getTimezone(), isNano);
     }
   }
 }

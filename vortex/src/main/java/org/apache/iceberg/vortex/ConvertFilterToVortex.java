@@ -217,13 +217,13 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
       Set<T> literalSet,
       Type termType) {
     Expression[] eqExprs = new Expression[literalSet.size()];
-    int i = 0;
+    int idx = 0;
     for (T value : literalSet) {
       Expression vortexLit = toVortexLiteral(value, termType);
       if (vortexLit == UNCONVERTIBLE) {
         return UNCONVERTIBLE;
       }
-      eqExprs[i++] = Expression.binary(BinaryOp.EQ, term, vortexLit);
+      eqExprs[idx++] = Expression.binary(BinaryOp.EQ, term, vortexLit);
     }
 
     return switch (op) {

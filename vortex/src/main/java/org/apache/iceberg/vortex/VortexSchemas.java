@@ -176,7 +176,6 @@ public final class VortexSchemas {
   }
 
   private static Type toIcebergType(Field field) {
-    ArrowType arrowType = field.getType();
     // UUID is conveyed as the {@code arrow.uuid} extension over FixedSizeBinary(16). Check the
     // metadata directly so this works whether or not the extension is registered with
     // ExtensionTypeRegistry (i.e. whether arrowType deserialized to ExtensionType or stayed as
@@ -184,57 +183,64 @@ public final class VortexSchemas {
     if (isUuidField(field)) {
       return Types.UUIDType.get();
     }
+    ArrowType arrowType = field.getType();
+    if (arrowType instanceof ArrowType.Int intType) {
+      return intType.getBitWidth() <= Integer.SIZE ? Types.IntegerType.get() : Types.LongType.get();
+    } else if (arrowType instanceof ArrowType.FloatingPoint fpType) {
+      return toIcebergFloatingPoint(fpType);
+    } else if (arrowType instanceof ArrowType.Decimal decType) {
+      return Types.DecimalType.of(decType.getPrecision(), decType.getScale());
+    } else if (arrowType instanceof ArrowType.FixedSizeBinary fixed) {
+      return Types.FixedType.ofLength(fixed.getByteWidth());
+    } else if (arrowType instanceof ArrowType.Timestamp tsType) {
+      return toIcebergTimestamp(tsType);
+    } else if (arrowType instanceof ArrowType.List) {
+      return toIcebergList(field);
+    }
+    return toIcebergSimpleType(arrowType);
+  }
+
+  private static Type toIcebergSimpleType(ArrowType arrowType) {
     if (arrowType instanceof ArrowType.Null) {
       return Types.UnknownType.get();
     } else if (arrowType instanceof ArrowType.Bool) {
       return Types.BooleanType.get();
-    } else if (arrowType instanceof ArrowType.Int intType) {
-      if (intType.getBitWidth() <= Integer.SIZE) {
-        return Types.IntegerType.get();
-      } else {
-        return Types.LongType.get();
-      }
-    } else if (arrowType instanceof ArrowType.FloatingPoint fpType) {
-      return switch (fpType.getPrecision()) {
-        case SINGLE -> Types.FloatType.get();
-        case DOUBLE -> Types.DoubleType.get();
-        case HALF ->
-            throw new UnsupportedOperationException("Half-precision floats are not supported");
-      };
-    } else if (arrowType instanceof ArrowType.Decimal decType) {
-      return Types.DecimalType.of(decType.getPrecision(), decType.getScale());
     } else if (arrowType instanceof ArrowType.Utf8 || arrowType instanceof ArrowType.LargeUtf8) {
       return Types.StringType.get();
     } else if (arrowType instanceof ArrowType.Binary
         || arrowType instanceof ArrowType.LargeBinary) {
       return Types.BinaryType.get();
-    } else if (arrowType instanceof ArrowType.FixedSizeBinary fixed) {
-      return Types.FixedType.ofLength(fixed.getByteWidth());
     } else if (arrowType instanceof ArrowType.Date) {
       return Types.DateType.get();
     } else if (arrowType instanceof ArrowType.Time) {
       return Types.TimeType.get();
-    } else if (arrowType instanceof ArrowType.Timestamp tsType) {
-      if (tsType.getTimezone() == null) {
-        return tsType.getUnit() == TimeUnit.NANOSECOND
-            ? Types.TimestampNanoType.withoutZone()
-            : Types.TimestampType.withoutZone();
-      } else {
-        return tsType.getUnit() == TimeUnit.NANOSECOND
-            ? Types.TimestampNanoType.withZone()
-            : Types.TimestampType.withZone();
-      }
-    } else if (arrowType instanceof ArrowType.List) {
-      Field elementField = field.getChildren().get(0);
-      Type innerType = toIcebergType(elementField);
-      if (elementField.isNullable()) {
-        return Types.ListType.ofOptional(0, innerType);
-      } else {
-        return Types.ListType.ofRequired(0, innerType);
-      }
-    } else {
-      throw new UnsupportedOperationException("Unsupported Arrow type: " + arrowType);
     }
+    throw new UnsupportedOperationException("Unsupported Arrow type: " + arrowType);
+  }
+
+  private static Type toIcebergFloatingPoint(ArrowType.FloatingPoint fpType) {
+    return switch (fpType.getPrecision()) {
+      case SINGLE -> Types.FloatType.get();
+      case DOUBLE -> Types.DoubleType.get();
+      case HALF ->
+          throw new UnsupportedOperationException("Half-precision floats are not supported");
+    };
+  }
+
+  private static Type toIcebergTimestamp(ArrowType.Timestamp tsType) {
+    boolean isNano = tsType.getUnit() == TimeUnit.NANOSECOND;
+    if (tsType.getTimezone() == null) {
+      return isNano ? Types.TimestampNanoType.withoutZone() : Types.TimestampType.withoutZone();
+    }
+    return isNano ? Types.TimestampNanoType.withZone() : Types.TimestampType.withZone();
+  }
+
+  private static Type toIcebergList(Field field) {
+    Field elementField = field.getChildren().get(0);
+    Type innerType = toIcebergType(elementField);
+    return elementField.isNullable()
+        ? Types.ListType.ofOptional(0, innerType)
+        : Types.ListType.ofRequired(0, innerType);
   }
 
   /**
