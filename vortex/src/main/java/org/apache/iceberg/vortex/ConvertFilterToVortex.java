@@ -18,8 +18,9 @@
  */
 package org.apache.iceberg.vortex;
 
+import dev.vortex.api.Expression;
+import dev.vortex.api.Expression.BinaryOp;
 import java.util.Set;
-
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.expressions.BoundPredicate;
 import org.apache.iceberg.expressions.BoundReference;
@@ -28,17 +29,11 @@ import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.expressions.UnboundPredicate;
 import org.apache.iceberg.types.Type;
 
-import dev.vortex.api.Expression;
-import dev.vortex.api.Expression.BinaryOp;
-
 /**
- * Convert an Iceberg filter expression into a valid Vortex pruning predicate
- * that can be pushed
+ * Convert an Iceberg filter expression into a valid Vortex pruning predicate that can be pushed
  * into the scan node.
  *
- * <p>
- * Filters that cannot be translated will default to {@code ALWAYS_TRUE} to be
- * skipped.
+ * <p>Filters that cannot be translated will default to {@code ALWAYS_TRUE} to be skipped.
  */
 public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVisitor<Expression> {
   static final Expression ALWAYS_TRUE = Expression.literal(true);
@@ -162,10 +157,8 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
   }
 
   /**
-   * Convert an Iceberg value to a Vortex literal Expression. Returns
-   * {@link #UNCONVERTIBLE} if no
-   * matching Vortex literal type exists (binary, decimal, date, time, timestamp,
-   * uuid).
+   * Convert an Iceberg value to a Vortex literal Expression. Returns {@link #UNCONVERTIBLE} if no
+   * matching Vortex literal type exists (binary, decimal, date, time, timestamp, uuid).
    */
   private Expression toVortexLiteral(Object value, Type termType) {
     if (value == null) {

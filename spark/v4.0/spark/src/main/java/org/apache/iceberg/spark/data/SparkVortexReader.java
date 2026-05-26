@@ -37,6 +37,7 @@ import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 
 /** Read Vortex as Spark {@link InternalRow}. */
 public class SparkVortexReader implements VortexRowReader<InternalRow> {
+
   private final List<VortexValueReader<?>> fieldReaders;
 
   public SparkVortexReader(
@@ -65,10 +66,10 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
   }
 
   static class SparkReadBuilder extends VortexSchemaWithTypeVisitor<VortexValueReader<?>> {
+
     static final SparkReadBuilder INSTANCE = new SparkReadBuilder();
 
-    private SparkReadBuilder() {
-    }
+    private SparkReadBuilder() {}
 
     @Override
     public VortexValueReader<?> struct(
@@ -109,6 +110,7 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
   }
 
   static class StructReader implements VortexValueReader<InternalRow> {
+
     private final List<VortexValueReader<?>> fields;
 
     private StructReader(List<VortexValueReader<?>> fields) {
@@ -117,7 +119,8 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
 
     @Override
     public InternalRow readNonNull(FieldVector vector, int row) {
-      org.apache.arrow.vector.complex.StructVector struct = (org.apache.arrow.vector.complex.StructVector) vector;
+      org.apache.arrow.vector.complex.StructVector struct =
+          (org.apache.arrow.vector.complex.StructVector) vector;
       GenericInternalRow result = new GenericInternalRow(fields.size());
       for (int i = 0; i < fields.size(); i++) {
         VortexValueReader<?> fieldReader = fields.get(i);
@@ -127,8 +130,4 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
       return result;
     }
   }
-
-  // Silence unused warning that TimeUnit class is required for the public API.
-  @SuppressWarnings("unused")
-  private static final TimeUnit UNUSED = TimeUnit.MICROSECOND;
 }

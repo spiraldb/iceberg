@@ -21,7 +21,6 @@ package org.apache.iceberg.data.vortex;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.DateUnit;
@@ -147,7 +146,7 @@ public class GenericVortexReader implements VortexRowReader<Record> {
         case SINGLE -> GenericVortexReaders.floats();
         case DOUBLE -> GenericVortexReaders.doubles();
         case HALF ->
-          throw new UnsupportedOperationException("Half-precision floats are not supported");
+            throw new UnsupportedOperationException("Half-precision floats are not supported");
       };
     }
 

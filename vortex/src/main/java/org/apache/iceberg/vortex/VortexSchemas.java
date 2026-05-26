@@ -23,7 +23,6 @@ import static org.apache.iceberg.types.Types.NestedField.required;
 
 import java.util.List;
 import java.util.Map;
-
 import org.apache.arrow.vector.types.DateUnit;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.TimeUnit;
@@ -38,19 +37,12 @@ import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 
 public final class VortexSchemas {
-  /**
-   * Canonical Arrow extension name for UUIDs (matches
-   * {@code arrow.vector.extension.UuidType}).
-   */
+  /** Canonical Arrow extension name for UUIDs (matches {@code arrow.vector.extension.UuidType}). */
   static final String UUID_EXTENSION_NAME = "arrow.uuid";
 
-  private VortexSchemas() {
-  }
+  private VortexSchemas() {}
 
-  /**
-   * Convert a Vortex file's Arrow
-   * {@link org.apache.arrow.vector.types.pojo.Schema} to Iceberg.
-   */
+  /** Convert a Vortex file's Arrow {@link org.apache.arrow.vector.types.pojo.Schema} to Iceberg. */
   public static Schema convert(org.apache.arrow.vector.types.pojo.Schema arrowSchema) {
     List<Field> fields = arrowSchema.getFields();
     List<Types.NestedField> columns = Lists.newArrayListWithExpectedSize(fields.size());
@@ -67,10 +59,7 @@ public final class VortexSchemas {
     return new Schema(columns);
   }
 
-  /**
-   * Convert an Iceberg Schema to an Arrow Schema suitable for
-   * {@code VortexWriter.create}.
-   */
+  /** Convert an Iceberg Schema to an Arrow Schema suitable for {@code VortexWriter.create}. */
   public static org.apache.arrow.vector.types.pojo.Schema toArrowSchema(Schema icebergSchema) {
     ImmutableList.Builder<Field> fields = ImmutableList.builder();
     for (Types.NestedField column : icebergSchema.columns()) {
@@ -84,25 +73,25 @@ public final class VortexSchemas {
     return switch (type.typeId()) {
       case BOOLEAN -> new Field(name, new FieldType(nullable, ArrowType.Bool.INSTANCE, null), null);
       case INTEGER ->
-        new Field(
-            name, new FieldType(nullable, new ArrowType.Int(Integer.SIZE, true), null), null);
+          new Field(
+              name, new FieldType(nullable, new ArrowType.Int(Integer.SIZE, true), null), null);
       case LONG ->
-        new Field(name, new FieldType(nullable, new ArrowType.Int(Long.SIZE, true), null), null);
+          new Field(name, new FieldType(nullable, new ArrowType.Int(Long.SIZE, true), null), null);
       case FLOAT ->
-        new Field(
-            name,
-            new FieldType(
-                nullable, new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE), null),
-            null);
+          new Field(
+              name,
+              new FieldType(
+                  nullable, new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE), null),
+              null);
       case DOUBLE ->
-        new Field(
-            name,
-            new FieldType(
-                nullable, new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE), null),
-            null);
+          new Field(
+              name,
+              new FieldType(
+                  nullable, new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE), null),
+              null);
       case STRING -> new Field(name, new FieldType(nullable, ArrowType.Utf8.INSTANCE, null), null);
       case BINARY ->
-        new Field(name, new FieldType(nullable, ArrowType.Binary.INSTANCE, null), null);
+          new Field(name, new FieldType(nullable, ArrowType.Binary.INSTANCE, null), null);
       case FIXED -> {
         Types.FixedType fixedType = (Types.FixedType) type;
         yield new Field(
@@ -121,23 +110,24 @@ public final class VortexSchemas {
             null);
       }
       case UUID -> {
-        Map<String, String> extMetadata = ImmutableMap.of(
-            ArrowType.ExtensionType.EXTENSION_METADATA_KEY_NAME,
-            UUID_EXTENSION_NAME,
-            ArrowType.ExtensionType.EXTENSION_METADATA_KEY_METADATA,
-            "");
+        Map<String, String> extMetadata =
+            ImmutableMap.of(
+                ArrowType.ExtensionType.EXTENSION_METADATA_KEY_NAME,
+                UUID_EXTENSION_NAME,
+                ArrowType.ExtensionType.EXTENSION_METADATA_KEY_METADATA,
+                "");
         yield new Field(
             name,
             new FieldType(nullable, new ArrowType.FixedSizeBinary(16), null, extMetadata),
             null);
       }
       case DATE ->
-        new Field(name, new FieldType(nullable, new ArrowType.Date(DateUnit.DAY), null), null);
+          new Field(name, new FieldType(nullable, new ArrowType.Date(DateUnit.DAY), null), null);
       case TIME ->
-        new Field(
-            name,
-            new FieldType(nullable, new ArrowType.Time(TimeUnit.MICROSECOND, Long.SIZE), null),
-            null);
+          new Field(
+              name,
+              new FieldType(nullable, new ArrowType.Time(TimeUnit.MICROSECOND, Long.SIZE), null),
+              null);
       case TIMESTAMP -> {
         Types.TimestampType tsType = (Types.TimestampType) type;
         yield new Field(
@@ -162,7 +152,8 @@ public final class VortexSchemas {
       }
       case LIST -> {
         Types.ListType listType = (Types.ListType) type;
-        Field elementField = toArrowField("element", listType.elementType(), listType.isElementOptional());
+        Field elementField =
+            toArrowField("element", listType.elementType(), listType.isElementOptional());
         yield new Field(
             name,
             new FieldType(nullable, ArrowType.List.INSTANCE, null),
@@ -179,8 +170,8 @@ public final class VortexSchemas {
             name, new FieldType(nullable, ArrowType.Struct.INSTANCE, null), children.build());
       }
       default ->
-        throw new UnsupportedOperationException(
-            "Unsupported Iceberg type for Arrow conversion: " + type);
+          throw new UnsupportedOperationException(
+              "Unsupported Iceberg type for Arrow conversion: " + type);
     };
   }
 
@@ -235,7 +226,7 @@ public final class VortexSchemas {
       case SINGLE -> Types.FloatType.get();
       case DOUBLE -> Types.DoubleType.get();
       case HALF ->
-        throw new UnsupportedOperationException("Half-precision floats are not supported");
+          throw new UnsupportedOperationException("Half-precision floats are not supported");
     };
   }
 
@@ -256,24 +247,8 @@ public final class VortexSchemas {
   }
 
   /**
-   * True when {@code field} carries the {@code arrow.uuid} extension marker.
-   * Checking the field
-   * metadata works whether or not {@link ArrowType.ExtensionType} was
-   * deserialized by the registry.
-   */
-  public static boolean isUuidField(Field field) {
-    if (field.getType() instanceof ArrowType.ExtensionType ext) {
-      return UUID_EXTENSION_NAME.equals(ext.extensionName());
-    }
-    return UUID_EXTENSION_NAME.equals(
-        field.getMetadata().get(ArrowType.ExtensionType.EXTENSION_METADATA_KEY_NAME));
-  }
-
-  /**
-   * True when {@code field} carries the {@code arrow.uuid} extension marker.
-   * Checking the field
-   * metadata works whether or not {@link ArrowType.ExtensionType} was
-   * deserialized by the registry.
+   * True when {@code field} carries the {@code arrow.uuid} extension marker. Checking the field
+   * metadata works whether or not {@link ArrowType.ExtensionType} was deserialized by the registry.
    */
   public static boolean isUuidField(Field field) {
     if (field.getType() instanceof ArrowType.ExtensionType ext) {

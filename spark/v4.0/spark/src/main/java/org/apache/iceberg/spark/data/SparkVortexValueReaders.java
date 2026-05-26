@@ -37,8 +37,7 @@ import org.apache.iceberg.vortex.VortexValueReader;
 import org.apache.spark.unsafe.types.UTF8String;
 
 public class SparkVortexValueReaders {
-  private SparkVortexValueReaders() {
-  }
+  private SparkVortexValueReaders() {}
 
   public static VortexValueReader<UTF8String> utf8String() {
     return UTF8Reader.INSTANCE;
@@ -66,8 +65,7 @@ public class SparkVortexValueReaders {
   static class UTF8Reader implements VortexValueReader<UTF8String> {
     static final UTF8Reader INSTANCE = new UTF8Reader();
 
-    private UTF8Reader() {
-    }
+    private UTF8Reader() {}
 
     @Override
     public UTF8String readNonNull(FieldVector vector, int row) {
@@ -79,14 +77,14 @@ public class SparkVortexValueReaders {
   static class UuidReader implements VortexValueReader<UTF8String> {
     static final UuidReader INSTANCE = new UuidReader();
 
-    private UuidReader() {
-    }
+    private UuidReader() {}
 
     @Override
     public UTF8String readNonNull(FieldVector vector, int row) {
-      FixedSizeBinaryVector storage = vector instanceof ExtensionTypeVector<?> ext
-          ? (FixedSizeBinaryVector) ext.getUnderlyingVector()
-          : (FixedSizeBinaryVector) vector;
+      FixedSizeBinaryVector storage =
+          vector instanceof ExtensionTypeVector<?> ext
+              ? (FixedSizeBinaryVector) ext.getUnderlyingVector()
+              : (FixedSizeBinaryVector) vector;
       return UTF8String.fromString(UUIDUtil.convert(storage.get(row)).toString());
     }
   }
@@ -95,8 +93,7 @@ public class SparkVortexValueReaders {
   static class DateReader implements VortexValueReader<Integer> {
     static final DateReader INSTANCE = new DateReader();
 
-    private DateReader() {
-    }
+    private DateReader() {}
 
     @Override
     public Integer readNonNull(FieldVector vector, int row) {

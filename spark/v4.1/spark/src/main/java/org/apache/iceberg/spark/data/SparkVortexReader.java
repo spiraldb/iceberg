@@ -20,7 +20,6 @@ package org.apache.iceberg.spark.data;
 
 import java.util.List;
 import java.util.Map;
-
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.ArrowType;
@@ -68,8 +67,7 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
   static class SparkReadBuilder extends VortexSchemaWithTypeVisitor<VortexValueReader<?>> {
     static final SparkReadBuilder INSTANCE = new SparkReadBuilder();
 
-    private SparkReadBuilder() {
-    }
+    private SparkReadBuilder() {}
 
     @Override
     public VortexValueReader<?> struct(
@@ -118,7 +116,8 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
 
     @Override
     public InternalRow readNonNull(FieldVector vector, int row) {
-      org.apache.arrow.vector.complex.StructVector struct = (org.apache.arrow.vector.complex.StructVector) vector;
+      org.apache.arrow.vector.complex.StructVector struct =
+          (org.apache.arrow.vector.complex.StructVector) vector;
       GenericInternalRow result = new GenericInternalRow(fields.size());
       for (int i = 0; i < fields.size(); i++) {
         VortexValueReader<?> fieldReader = fields.get(i);
