@@ -22,7 +22,6 @@ import java.util.List;
 import java.util.Map;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.types.TimeUnit;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.iceberg.Schema;
@@ -84,37 +83,27 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
 
     @Override
     public VortexValueReader<?> primitive(Type.PrimitiveType icebergType, Field primField) {
-      switch (icebergType.typeId()) {
-        case BOOLEAN:
-          return GenericVortexReaders.bools();
-        case INTEGER:
-          return GenericVortexReaders.ints();
-        case LONG:
-          return GenericVortexReaders.longs();
-        case FLOAT:
-          return GenericVortexReaders.floats();
-        case DOUBLE:
-          return GenericVortexReaders.doubles();
-        case STRING:
-          return SparkVortexValueReaders.utf8String();
-        case BINARY:
-          return GenericVortexReaders.bytes();
-        case DECIMAL:
-          return GenericVortexReaders.decimals();
-        case TIMESTAMP:
-        case TIMESTAMP_NANO:
-          {
-            ArrowType.Timestamp ts = (ArrowType.Timestamp) primField.getType();
-            return SparkVortexValueReaders.timestamp(ts.getUnit());
-          }
-        case DATE:
-          return SparkVortexValueReaders.date();
-        case UUID:
-          return SparkVortexValueReaders.uuid();
-        case TIME:
-        default:
-          throw new UnsupportedOperationException("Unsupported type: " + icebergType);
-      }
+      return switch (icebergType.typeId()) {
+        case BOOLEAN -> GenericVortexReaders.bools();
+        case INTEGER -> GenericVortexReaders.ints();
+        case LONG -> GenericVortexReaders.longs();
+        case FLOAT -> GenericVortexReaders.floats();
+        case DOUBLE -> GenericVortexReaders.doubles();
+        case STRING -> SparkVortexValueReaders.utf8String();
+        case BINARY -> GenericVortexReaders.bytes();
+        case DECIMAL -> GenericVortexReaders.decimals();
+        case TIMESTAMP, TIMESTAMP_NANO -> {
+          ArrowType.Timestamp ts = (ArrowType.Timestamp) primField.getType();
+          yield SparkVortexValueReaders.timestamp(ts.getUnit());
+        }
+        case TIME -> {
+          ArrowType.Time time = (ArrowType.Time) primField.getType();
+          yield SparkVortexValueReaders.time(time.getUnit());
+        }
+        case DATE -> SparkVortexValueReaders.date();
+        case UUID -> SparkVortexValueReaders.uuid();
+        default -> throw new UnsupportedOperationException("Unsupported type: " + icebergType);
+      };
     }
   }
 
@@ -138,8 +127,4 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
       return result;
     }
   }
-
-  // Silence unused warning that TimeUnit class is required for the public API.
-  @SuppressWarnings("unused")
-  private static final TimeUnit UNUSED = TimeUnit.MICROSECOND;
 }

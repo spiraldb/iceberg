@@ -101,7 +101,6 @@ public class SparkVortexWriter implements VortexValueWriter<InternalRow> {
         ((VarCharVector) vector).setSafe(rowIndex, str.getBytes());
         break;
       case BINARY:
-      case FIXED:
         byte[] bytes = row.getBinary(fieldIndex);
         ((VarBinaryVector) vector).setSafe(rowIndex, bytes);
         break;

@@ -25,6 +25,8 @@ import org.apache.arrow.vector.DateMilliVector;
 import org.apache.arrow.vector.ExtensionTypeVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.FixedSizeBinaryVector;
+import org.apache.arrow.vector.TimeMicroVector;
+import org.apache.arrow.vector.TimeNanoVector;
 import org.apache.arrow.vector.TimeStampVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.types.TimeUnit;
@@ -53,6 +55,11 @@ public class SparkVortexValueReaders {
   public static VortexValueReader<Long> timestamp(TimeUnit timeUnit) {
     // Spark timestamp has µs precision
     return new TimestampReader(timeUnit);
+  }
+
+  public static VortexValueReader<Long> time(TimeUnit timeUnit) {
+    // Spark's TimeType is stored as microseconds since midnight (Long).
+    return new TimeReader(timeUnit);
   }
 
   static class UTF8Reader implements VortexValueReader<UTF8String> {
@@ -112,6 +119,32 @@ public class SparkVortexValueReaders {
       long measure;
       if (vector instanceof TimeStampVector ts) {
         measure = ts.get(row);
+      } else {
+        measure = ((BigIntVector) vector).get(row);
+      }
+      return switch (unit) {
+        case NANOSECOND -> Math.floorDiv(measure, 1_000L);
+        case MICROSECOND -> measure;
+        case MILLISECOND -> Math.multiplyExact(measure, 1_000L);
+        case SECOND -> Math.multiplyExact(measure, 1_000_000L);
+      };
+    }
+  }
+
+  static class TimeReader implements VortexValueReader<Long> {
+    private final TimeUnit unit;
+
+    private TimeReader(TimeUnit unit) {
+      this.unit = unit;
+    }
+
+    @Override
+    public Long readNonNull(FieldVector vector, int row) {
+      long measure;
+      if (vector instanceof TimeMicroVector tm) {
+        measure = tm.get(row);
+      } else if (vector instanceof TimeNanoVector tn) {
+        measure = tn.get(row);
       } else {
         measure = ((BigIntVector) vector).get(row);
       }

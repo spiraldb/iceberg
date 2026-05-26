@@ -97,8 +97,8 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
           yield SparkVortexValueReaders.timestamp(ts.getUnit());
         }
         case TIME -> {
-          ArrowType.Time t = (ArrowType.Time) primField.getType();
-          yield SparkVortexValueReaders.time(t.getUnit());
+          ArrowType.Time time = (ArrowType.Time) primField.getType();
+          yield SparkVortexValueReaders.time(time.getUnit());
         }
         case DATE -> SparkVortexValueReaders.date();
         case UUID -> SparkVortexValueReaders.uuid();
