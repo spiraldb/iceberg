@@ -20,6 +20,7 @@ package org.apache.iceberg.data.vortex;
 
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -31,6 +32,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
+
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
@@ -57,6 +59,10 @@ import org.apache.iceberg.data.Record;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.ByteBuffers;
 import org.apache.iceberg.util.UUIDUtil;
+import org.apache.iceberg.variants.Serialized;
+import org.apache.iceberg.variants.Variant;
+import org.apache.iceberg.variants.VariantMetadata;
+import org.apache.iceberg.variants.VariantValue;
 import org.apache.iceberg.vortex.VortexValueWriter;
 
 /** Writes Iceberg generic {@link Record} objects to Arrow vectors for Vortex file output. */
@@ -226,10 +232,51 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
         // Mark the struct slot itself as non-null for this row.
         structVector.setIndexDefined(rowIndex);
         break;
+      case VARIANT:
+        writeVariant((StructVector) vector, (Variant) value, rowIndex);
+
+        break;
+
       default:
         throw new UnsupportedOperationException(
             "Unsupported Iceberg type for Vortex write: " + type);
     }
+  }
+
+  private static void writeVariant(StructVector vector, Variant variant, int rowIndex) {
+    vector.setIndexDefined(rowIndex);
+
+    writeVariantMetadata(
+        vector.getChild("metadata", VarBinaryVector.class), variant.metadata(), rowIndex);
+    writeVariantValue(vector.getChild("value", VarBinaryVector.class), variant.value(), rowIndex);
+  }
+
+  private static void writeVariantMetadata(
+      VarBinaryVector vector, VariantMetadata metadata, int rowIndex) {
+    if (metadata instanceof Serialized serialized) {
+      writeSerialized(vector, serialized, rowIndex);
+      return;
+    }
+
+    ByteBuffer buffer = ByteBuffer.allocate(metadata.sizeInBytes()).order(ByteOrder.LITTLE_ENDIAN);
+    int length = metadata.writeTo(buffer, 0);
+    vector.setSafe(rowIndex, buffer, 0, length);
+  }
+
+  private static void writeVariantValue(VarBinaryVector vector, VariantValue value, int rowIndex) {
+    if (value instanceof Serialized serialized) {
+      writeSerialized(vector, serialized, rowIndex);
+      return;
+    }
+
+    ByteBuffer buffer = ByteBuffer.allocate(value.sizeInBytes()).order(ByteOrder.LITTLE_ENDIAN);
+    int length = value.writeTo(buffer, 0);
+    vector.setSafe(rowIndex, buffer, 0, length);
+  }
+
+  private static void writeSerialized(VarBinaryVector vector, Serialized serialized, int rowIndex) {
+    ByteBuffer buffer = serialized.buffer();
+    vector.setSafe(rowIndex, buffer, buffer.position(), buffer.remaining());
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -295,6 +342,10 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
     private long nullCount;
     private T min;
     private T max;
+
+    ColumnMetricsTracker(int fieldId) {
+      this(fieldId, null, null);
+    }
 
     ColumnMetricsTracker(int fieldId, Comparator<T> comparator) {
       this(fieldId, comparator, null);

@@ -41,6 +41,12 @@ public final class VortexSchemas {
   /** Canonical Arrow extension name for UUIDs (matches {@code arrow.vector.extension.UuidType}). */
   static final String UUID_EXTENSION_NAME = "arrow.uuid";
 
+  /**
+   * Canonical Arrow extension name for Parquet variant (matches {@code
+   * arrow.vector.extension.ParquetVariant}).
+   */
+  static final String VARIANT_EXTENSION_NAME = "arrow.parquet.variant";
+
   private VortexSchemas() {}
 
   /** Convert a Vortex file's Arrow {@link org.apache.arrow.vector.types.pojo.Schema} to Iceberg. */
@@ -228,6 +234,25 @@ public final class VortexSchemas {
 
         yield new Field(
             name, new FieldType(nullable, ArrowType.Struct.INSTANCE, null), children.build());
+      }
+      case VARIANT -> {
+        Map<String, String> extMetadata =
+            ImmutableMap.of(
+                ArrowType.ExtensionType.EXTENSION_METADATA_KEY_NAME,
+                VARIANT_EXTENSION_NAME,
+                ArrowType.ExtensionType.EXTENSION_METADATA_KEY_METADATA,
+                "");
+
+        ImmutableList.Builder<Field> children = ImmutableList.builder();
+        children.add(
+            new Field("metadata", new FieldType(false, ArrowType.Binary.INSTANCE, null), null));
+        children.add(
+            new Field("value", new FieldType(true, ArrowType.Binary.INSTANCE, null), null));
+
+        yield new Field(
+            name,
+            new FieldType(nullable, ArrowType.Struct.INSTANCE, null, extMetadata),
+            children.build());
       }
       default ->
           throw new UnsupportedOperationException(
@@ -492,6 +517,11 @@ public final class VortexSchemas {
     if (isUuidField(field)) {
       return Types.UUIDType.get();
     }
+
+    if (isVariantField(field)) {
+      return Types.VariantType.get();
+    }
+
     ArrowType arrowType = field.getType();
     if (arrowType instanceof ArrowType.Int intType) {
       return intType.getBitWidth() <= Integer.SIZE ? Types.IntegerType.get() : Types.LongType.get();
@@ -683,5 +713,12 @@ public final class VortexSchemas {
             .get(
                 dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.ExtensionType
                     .EXTENSION_METADATA_KEY_NAME));
+    }
+  public static boolean isVariantField(Field field) {
+    if (field.getType() instanceof ArrowType.ExtensionType ext) {
+      return VARIANT_EXTENSION_NAME.equals(ext.extensionName());
+    }
+    return VARIANT_EXTENSION_NAME.equals(
+        field.getMetadata().get(ArrowType.ExtensionType.EXTENSION_METADATA_KEY_NAME));
   }
 }
