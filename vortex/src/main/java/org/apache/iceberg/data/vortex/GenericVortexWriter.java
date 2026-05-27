@@ -56,6 +56,7 @@ import org.apache.arrow.vector.complex.StructVector;
 import org.apache.iceberg.FieldMetrics;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.Record;
+import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.ByteBuffers;
 import org.apache.iceberg.util.UUIDUtil;
@@ -96,7 +97,12 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
 
       ColumnMetricsTracker<Object> tracker = (ColumnMetricsTracker<Object>) trackers[fieldIndex];
       if (value == null) {
-        vector.setNull(rowIndex);
+        if (field.isRequired()) {
+          throw new IllegalArgumentException(
+              "Cannot write null value for required field: " + field);
+        }
+
+        writeNull(vector, field.type(), rowIndex);
         tracker.addNull();
         continue;
       }
@@ -236,10 +242,28 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
         writeVariant((StructVector) vector, (Variant) value, rowIndex);
 
         break;
-
       default:
         throw new UnsupportedOperationException(
             "Unsupported Iceberg type for Vortex write: " + type);
+    }
+  }
+
+  private static void writeNull(FieldVector vector, Type type, int rowIndex) {
+    if (type.isVariantType()) {
+      writeNullVariant((StructVector) vector, rowIndex);
+    } else {
+      vector.setNull(rowIndex);
+    }
+  }
+
+  private static void writeNullVariant(StructVector vector, int rowIndex) {
+    vector.setNull(rowIndex);
+    writeVariantMetadata(
+        vector.getChild("metadata", VarBinaryVector.class), VariantMetadata.empty(), rowIndex);
+
+    VarBinaryVector valueVector = vector.getChild("value", VarBinaryVector.class);
+    if (valueVector != null) {
+      valueVector.setNull(rowIndex);
     }
   }
 
@@ -275,8 +299,7 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
   }
 
   private static void writeSerialized(VarBinaryVector vector, Serialized serialized, int rowIndex) {
-    ByteBuffer buffer = serialized.buffer();
-    vector.setSafe(rowIndex, buffer, buffer.position(), buffer.remaining());
+    vector.setSafe(rowIndex, ByteBuffers.toByteArray(serialized.buffer()));
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})

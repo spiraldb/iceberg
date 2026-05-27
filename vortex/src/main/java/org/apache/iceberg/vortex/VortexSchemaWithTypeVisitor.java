@@ -48,6 +48,10 @@ public abstract class VortexSchemaWithTypeVisitor<T> {
   }
 
   public static <T> T visit(Type iType, Field field, VortexSchemaWithTypeVisitor<T> visitor) {
+    if ((iType != null && iType.isVariantType()) || VortexSchemas.isVariantField(field)) {
+      return visitor.primitive(null, field);
+    }
+
     ArrowType arrowType = field.getType();
     if (arrowType instanceof ArrowType.Struct) {
       return visitStruct(iType != null ? iType.asStructType() : null, field.getChildren(), visitor);

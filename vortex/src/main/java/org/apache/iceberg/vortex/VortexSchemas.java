@@ -31,6 +31,7 @@ import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
@@ -519,6 +520,7 @@ public final class VortexSchemas {
     }
 
     if (isVariantField(field)) {
+      validateVariantField(field);
       return Types.VariantType.get();
     }
 
@@ -648,6 +650,69 @@ public final class VortexSchemas {
       case HALF ->
           throw new UnsupportedOperationException("Half-precision floats are not supported");
     };
+  }
+  
+  private static void validateVariantField(Field field) {
+    Preconditions.checkArgument(
+        field.getType() instanceof ArrowType.Struct,
+        "Invalid Arrow variant field %s: expected struct storage type, found %s",
+        field.getName(),
+        field.getType());
+
+    Field metadata = findChild(field, "metadata");
+    Preconditions.checkArgument(
+        metadata != null,
+        "Invalid Arrow variant field %s: missing metadata child",
+        field.getName());
+    Preconditions.checkArgument(
+        !metadata.isNullable(),
+        "Invalid Arrow variant field %s: metadata child must be non-nullable",
+        field.getName());
+    Preconditions.checkArgument(
+        isBinaryLike(metadata.getType()),
+        "Invalid Arrow variant field %s: metadata child must be binary, found %s",
+        field.getName(),
+        metadata.getType());
+
+    Field value = findChild(field, "value");
+    if (value != null) {
+      Preconditions.checkArgument(
+          value.isNullable(),
+          "Invalid Arrow variant field %s: value child must be nullable",
+          field.getName());
+      Preconditions.checkArgument(
+          isBinaryLike(value.getType()),
+          "Invalid Arrow variant field %s: value child must be binary, found %s",
+          field.getName(),
+          value.getType());
+    }
+
+    Field typedValue = findChild(field, "typed_value");
+    if (typedValue != null) {
+      Preconditions.checkArgument(
+          typedValue.isNullable(),
+          "Invalid Arrow variant field %s: typed_value child must be nullable",
+          field.getName());
+    }
+
+    Preconditions.checkArgument(
+        value != null || typedValue != null,
+        "Invalid Arrow variant field %s: expected value or typed_value child",
+        field.getName());
+  }
+
+  private static Field findChild(Field field, String name) {
+    for (Field child : field.getChildren()) {
+      if (name.equals(child.getName())) {
+        return child;
+      }
+    }
+
+    return null;
+  }
+
+  private static boolean isBinaryLike(ArrowType arrowType) {
+    return arrowType instanceof ArrowType.Binary || arrowType instanceof ArrowType.LargeBinary;
   }
 
   private static Type toIcebergTimestamp(ArrowType.Timestamp tsType) {
