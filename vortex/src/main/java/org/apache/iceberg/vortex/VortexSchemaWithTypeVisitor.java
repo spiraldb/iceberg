@@ -19,10 +19,12 @@
 package org.apache.iceberg.vortex;
 
 import java.util.List;
+import java.util.Map;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 
@@ -62,12 +64,35 @@ public abstract class VortexSchemaWithTypeVisitor<T> {
 
   private static <T> T visitStruct(
       Types.StructType struct, List<Field> fields, VortexSchemaWithTypeVisitor<T> visitor) {
-    List<T> results = Lists.newArrayListWithExpectedSize(fields.size());
-    for (int fieldId = 0; fieldId < fields.size(); fieldId++) {
-      Field field = fields.get(fieldId);
-      Types.NestedField iField = struct != null ? struct.field(fieldId) : null;
-      results.add(visit(iField != null ? iField.type() : null, field, visitor));
+    if (struct == null) {
+      // No expected Iceberg type to bind to (a file-only column). Walk children positionally; the
+      // resulting reader is discarded by callers that pass a null target type.
+      List<T> results = Lists.newArrayListWithExpectedSize(fields.size());
+      for (Field field : fields) {
+        results.add(visit(null, field, visitor));
+      }
+      return visitor.struct(null, fields, results);
     }
-    return visitor.struct(struct, fields, results);
+
+    // Arrow/Vortex schemas carry no Iceberg field ids, so expected struct fields are bound to file
+    // columns by name (the top-level reader resolves columns the same way). Driving the walk from
+    // the expected fields lets a projection reorder, drop, or add struct fields relative to the
+    // physical file layout. The returned fields/children are aligned to the expected fields, with a
+    // null entry wherever the file does not contain the expected field.
+    Map<String, Field> fileFieldsByName = Maps.newHashMapWithExpectedSize(fields.size());
+    for (Field field : fields) {
+      fileFieldsByName.put(field.getName(), field);
+    }
+
+    List<Types.NestedField> expectedFields = struct.fields();
+    List<Field> matchedFields = Lists.newArrayListWithExpectedSize(expectedFields.size());
+    List<T> results = Lists.newArrayListWithExpectedSize(expectedFields.size());
+    for (Types.NestedField expectedField : expectedFields) {
+      Field fileField = fileFieldsByName.get(expectedField.name());
+      matchedFields.add(fileField);
+      results.add(fileField == null ? null : visit(expectedField.type(), fileField, visitor));
+    }
+
+    return visitor.struct(struct, matchedFields, results);
   }
 }
