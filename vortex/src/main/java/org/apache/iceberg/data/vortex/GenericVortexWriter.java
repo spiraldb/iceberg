@@ -191,7 +191,6 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
         Types.ListType listType = (Types.ListType) type;
         org.apache.iceberg.types.Type elementType = listType.elementType();
         ListVector listVector = (ListVector) vector;
-        listVector.getWriter()
         FieldVector elementVector = listVector.getDataVector();
         List<?> elements = (List<?>) value;
         int elementStart = listVector.startNewValue(rowIndex);
