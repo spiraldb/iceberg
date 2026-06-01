@@ -241,6 +241,7 @@ public final class VortexSchemas {
         arrowChildren);
   }
 
+  @SuppressWarnings("checkstyle:CyclomaticComplexity")
   private static ArrowType toArrowType(
       dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType arrowType) {
     if (arrowType
