@@ -891,10 +891,7 @@ public class VectorizedArrowReader implements VectorizedReader<VectorHolder> {
   private static BigIntVector allocateBigIntVector(Field field, int valueCount) {
     BigIntVector vector = (BigIntVector) field.createVector(ArrowAllocation.rootAllocator());
     vector.allocateNew(valueCount);
-    ArrowBuf validityBuffer = vector.getValidityBuffer();
-    for (int i = 0; i < valueCount; i += 1) {
-      BitVectorHelper.setBit(validityBuffer, i);
-    }
+    vector.getValidityBuffer().setOne(0L, valueCount);
 
     return vector;
   }
