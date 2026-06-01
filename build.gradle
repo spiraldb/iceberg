@@ -436,7 +436,6 @@ project(':iceberg-data') {
     implementation project(':iceberg-core')
     compileOnly project(':iceberg-parquet')
     compileOnly project(':iceberg-orc')
-    compileOnly project(':iceberg-vortex')
     compileOnly(libs.hadoop3.common) {
       exclude group: 'commons-beanutils'
       exclude group: 'org.apache.avro', module: 'avro'
