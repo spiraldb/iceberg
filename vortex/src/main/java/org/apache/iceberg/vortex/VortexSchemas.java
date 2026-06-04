@@ -506,7 +506,7 @@ public final class VortexSchemas {
             toVortexArrowField(
                 "value",
                 new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary(),
-                nullable));
+                true));
 
         yield toVortexArrowField(
             name,
@@ -580,6 +580,11 @@ public final class VortexSchemas {
     if (isUuidField(field)) {
       return Types.UUIDType.get();
     }
+
+    if (isVariantField(field)) {
+      return Types.VariantType.get();
+    }
+
     dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType arrowType = field.getType();
     if (arrowType
         instanceof dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Int intType) {
@@ -816,5 +821,20 @@ public final class VortexSchemas {
     }
     return VARIANT_EXTENSION_NAME.equals(
         field.getMetadata().get(ArrowType.ExtensionType.EXTENSION_METADATA_KEY_NAME));
+  }
+
+  public static boolean isVariantField(
+      dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field field) {
+    if (field.getType()
+        instanceof
+        dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.ExtensionType ext) {
+      return VARIANT_EXTENSION_NAME.equals(ext.extensionName());
+    }
+    return VARIANT_EXTENSION_NAME.equals(
+        field
+            .getMetadata()
+            .get(
+                dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.ExtensionType
+                    .EXTENSION_METADATA_KEY_NAME));
   }
 }

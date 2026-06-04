@@ -122,6 +122,22 @@ class TestVortexSchemas {
   }
 
   @Test
+  void requiredVariantToVortexArrowKeepsValueChildNullable() {
+    Schema icebergSchema =
+        new Schema(
+            required(1, "id", Types.LongType.get()), required(2, "v", Types.VariantType.get()));
+
+    dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field variant =
+        VortexSchemas.toVortexArrowSchema(icebergSchema).findField("v");
+    dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field value =
+        variant.getChildren().get(1);
+
+    assertThat(variant.isNullable()).isFalse();
+    assertThat(value.getName()).isEqualTo("value");
+    assertThat(value.isNullable()).isTrue();
+  }
+
+  @Test
   void variantFromArrowAcceptsTypedValueOnlyStorage() {
     Field variant =
         variantField(
