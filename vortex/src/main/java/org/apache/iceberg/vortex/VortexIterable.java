@@ -32,6 +32,7 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -42,8 +43,6 @@ import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
-import org.apache.iceberg.relocated.com.google.common.collect.Lists;
-import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -110,19 +109,13 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     // the reader fills them with null/constants instead of crashing the scan. Binding is by name:
     // Vortex stores no Iceberg field ids (its Java bindings drop Arrow field/schema metadata), so a
     // column renamed since write time cannot be rebound to its old physical column here.
-    Set<String> fileColumns = Sets.newHashSetWithExpectedSize(fileArrowSchema.getFields().size());
-    for (Field field : fileArrowSchema.getFields()) {
-      fileColumns.add(field.getName());
-    }
+    Set<String> fileColumns =
+        fileArrowSchema.getFields().stream()
+            .map(Field::getName)
+            .collect(Collectors.toUnmodifiableSet());
 
-    List<String> presentProjection = Lists.newArrayListWithExpectedSize(projection.size());
-    for (String name : projection) {
-      if (fileColumns.contains(name)) {
-        presentProjection.add(name);
-      }
-    }
-
-    String[] projectionNames = presentProjection.toArray(new String[0]);
+    String[] projectionNames =
+        projection.stream().filter(fileColumns::contains).toArray(String[]::new);
     dev.vortex.api.Expression scanProjection =
         dev.vortex.api.Expression.select(projectionNames, dev.vortex.api.Expression.root());
 

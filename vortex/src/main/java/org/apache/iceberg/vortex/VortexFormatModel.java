@@ -46,7 +46,6 @@ import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
-import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Types;
 
@@ -363,13 +362,14 @@ public class VortexFormatModel<D, S, R>
       // _pos is also excluded and currently resolves to null: Vortex exposes row positions through
       // a `row_idx` scan expression that the Java bindings (<= 0.73.0) do not yet surface.
       Map<Integer, ?> constants = idToConstant == null ? Collections.emptyMap() : idToConstant;
-      List<String> projection = Lists.newArrayList();
-      for (Types.NestedField field : schema.columns()) {
-        if (!constants.containsKey(field.fieldId())
-            && !MetadataColumns.isMetadataColumn(field.name())) {
-          projection.add(field.name());
-        }
-      }
+      List<String> projection =
+          schema.columns().stream()
+              .filter(
+                  field ->
+                      !constants.containsKey(field.fieldId())
+                          && !MetadataColumns.isMetadataColumn(field.name()))
+              .map(Types.NestedField::name)
+              .toList();
 
       return new VortexIterable<>(
           inputFile,
