@@ -38,6 +38,8 @@ import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 
+
+
 public final class VortexSchemas {
   /** Canonical Arrow extension name for UUIDs (matches {@code arrow.vector.extension.UuidType}). */
   static final String UUID_EXTENSION_NAME = "arrow.uuid";
@@ -485,6 +487,34 @@ public final class VortexSchemas {
             null,
             children.build());
       }
+      case VARIANT -> {
+        Map<String, String> extMetadata =
+            ImmutableMap.of(
+                ArrowType.ExtensionType.EXTENSION_METADATA_KEY_NAME,
+                VARIANT_EXTENSION_NAME,
+                ArrowType.ExtensionType.EXTENSION_METADATA_KEY_METADATA,
+                "");
+
+        ImmutableList.Builder<dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field>
+            children = ImmutableList.builder();
+        children.add(
+            toVortexArrowField(
+                "metadata",
+                new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary(),
+                false));
+        children.add(
+            toVortexArrowField(
+                "value",
+                new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary(),
+                nullable));
+
+        yield toVortexArrowField(
+            name,
+            new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Struct(),
+            nullable,
+            extMetadata,
+            children.build());
+      }
       default ->
           throw new UnsupportedOperationException(
               "Unsupported Iceberg type for Arrow conversion: " + type);
@@ -651,7 +681,7 @@ public final class VortexSchemas {
           throw new UnsupportedOperationException("Half-precision floats are not supported");
     };
   }
-  
+
   private static void validateVariantField(Field field) {
     Preconditions.checkArgument(
         field.getType() instanceof ArrowType.Struct,
@@ -778,7 +808,8 @@ public final class VortexSchemas {
             .get(
                 dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.ExtensionType
                     .EXTENSION_METADATA_KEY_NAME));
-    }
+  }
+
   public static boolean isVariantField(Field field) {
     if (field.getType() instanceof ArrowType.ExtensionType ext) {
       return VARIANT_EXTENSION_NAME.equals(ext.extensionName());
