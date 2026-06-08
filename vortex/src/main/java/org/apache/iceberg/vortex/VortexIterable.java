@@ -55,6 +55,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   private final InputFile inputFile;
   private final Optional<Expression> filterPredicate;
   private final long[] rowRange;
+  private final byte[] posDeleteBitmap;
   private final Function<org.apache.arrow.vector.types.pojo.Schema, VortexRowReader<T>>
       rowReaderFunc;
   private final Function<org.apache.arrow.vector.types.pojo.Schema, VortexBatchReader<T>>
@@ -68,6 +69,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
       List<String> projection,
       Optional<Expression> filterPredicate,
       long[] rowRange,
+      byte[] posDeleteBitmap,
       Function<org.apache.arrow.vector.types.pojo.Schema, VortexRowReader<T>> readerFunction,
       Function<org.apache.arrow.vector.types.pojo.Schema, VortexBatchReader<T>> batchReaderFunction,
       boolean caseSensitive,
@@ -76,6 +78,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     this.projection = projection;
     this.filterPredicate = filterPredicate;
     this.rowRange = rowRange;
+    this.posDeleteBitmap = posDeleteBitmap;
     this.rowReaderFunc = readerFunction;
     this.batchReaderFunction = batchReaderFunction;
     this.caseSensitive = caseSensitive;
@@ -144,6 +147,15 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     scanFilter.ifPresent(optionsBuilder::filter);
     if (rowRange != null) {
       optionsBuilder.rowRangeBegin(rowRange[0]).rowRangeEnd(rowRange[1]);
+    }
+
+    // Apply position deletes natively: the bitmap holds file-relative row positions of deleted rows
+    // (portable 64-bit Roaring), and Vortex drops them from the scan so they are never
+    // materialized.
+    if (posDeleteBitmap != null) {
+      optionsBuilder
+          .selectionRoaringBitmap(posDeleteBitmap)
+          .selectionMode(ScanOptions.SelectionMode.EXCLUDE_ROARING);
     }
 
     Scan scan = dataSource.scan(optionsBuilder.build());
