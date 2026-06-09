@@ -38,8 +38,6 @@ import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 
-
-
 public final class VortexSchemas {
   /** Canonical Arrow extension name for UUIDs (matches {@code arrow.vector.extension.UuidType}). */
   static final String UUID_EXTENSION_NAME = "arrow.uuid";

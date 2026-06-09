@@ -343,7 +343,7 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
               v -> ChronoUnit.NANOS.between(LOCAL_EPOCH, (LocalDateTime) v));
         }
       default:
-        if (field.type().isNestedType()) {
+        if (field.type().isNestedType() || field.type().isVariantType()) {
           // Lists, maps, and structs have no natural ordering — track counts only.
           return new ColumnMetricsTracker<>(field.fieldId(), null);
         }
