@@ -170,10 +170,6 @@ public class GenericVortexReader implements VortexRowReader<Record> {
 
     @Override
     public VortexValueReader<?> primitive(Type.PrimitiveType iPrimitive, Field primField) {
-      if (VortexSchemas.isVariantField(primField)) {
-        return GenericVortexReaders.variants();
-      }
-
       if ((iPrimitive != null && iPrimitive.typeId() == Type.TypeID.UUID)
           || VortexSchemas.isUuidField(primField)) {
         return GenericVortexReaders.uuids();
@@ -193,6 +189,11 @@ public class GenericVortexReader implements VortexRowReader<Record> {
         return timestampReader(tsType);
       }
       return simpleReader(arrowType);
+    }
+
+    @Override
+    public VortexValueReader<?> variant(Types.VariantType variantType, Field variantField) {
+      return GenericVortexReaders.variants();
     }
 
     private static VortexValueReader<?> simpleReader(ArrowType arrowType) {
