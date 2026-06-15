@@ -25,13 +25,14 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.TestTemplate;
 
 /**
- * Exercises the Spark columnar read path for Vortex tables with position deletes.
+ * Exercises the Spark columnar read path for Vortex tables with deletes.
  *
- * <p>Vortex applies position deletes and residual filters natively in the scan (see {@code
- * BaseBatchReader.newPushdownBatchIterable}), so the position-delete cases inherited from {@link
- * TestSparkReaderDeletes} run unchanged. The equality-delete and {@code _deleted}-with-delete-files
- * cases are skipped: the native pushdown path intentionally does not perform the post-scan
- * processing those require.
+ * <p>Vortex applies all deletes (and residual filters) natively in the scan (see {@code
+ * BaseBatchReader.newPushdownBatchIterable}): position deletes are pushed directly, and equality
+ * deletes are resolved to positions by a pre-scan and pushed as well. So the position- and
+ * equality-delete cases inherited from {@link TestSparkReaderDeletes} run unchanged. Only the
+ * {@code _deleted}-metadata-column-with-delete-files cases are skipped: that requires retaining and
+ * marking deleted rows, which the drop-only pushdown path does not do.
  */
 public class TestSparkVortexReaderDeletes extends TestSparkReaderDeletes {
 
@@ -43,111 +44,48 @@ public class TestSparkVortexReaderDeletes extends TestSparkReaderDeletes {
     };
   }
 
-  // Position deletes are dropped inside the Vortex scan, so they never reach Spark and are not
-  // reflected in the NumDeletes metric. Disable delete-count assertions for this path.
+  // Deletes are dropped inside the Vortex scan, so they never reach Spark and are not reflected in
+  // the NumDeletes metric. Disable delete-count assertions for this path.
   @Override
   protected boolean countDeletes() {
     return false;
   }
 
-  private static void skipUnsupported() {
+  private static void skipDeletedColumn() {
     Assumptions.abort(
-        "Vortex columnar reads apply position deletes and filters via native scan pushdown; "
-            + "equality deletes and the _deleted metadata column with delete files are not "
-            + "supported on this path");
-  }
-
-  // --- equality-delete cases inherited from DeleteReadTests ---
-
-  @TestTemplate
-  @Override
-  public void testEqualityDeletes() {
-    skipUnsupported();
-  }
-
-  @TestTemplate
-  @Override
-  public void testEqualityDateDeletes() {
-    skipUnsupported();
-  }
-
-  @TestTemplate
-  @Override
-  public void testEqualityDeletesWithRequiredEqColumn() {
-    skipUnsupported();
-  }
-
-  @TestTemplate
-  @Override
-  public void testEqualityDeletesSpanningMultipleDataFiles() {
-    skipUnsupported();
-  }
-
-  @TestTemplate
-  @Override
-  public void testMixedPositionAndEqualityDeletes() {
-    skipUnsupported();
-  }
-
-  @TestTemplate
-  @Override
-  public void testMultipleEqualityDeleteSchemas() {
-    skipUnsupported();
-  }
-
-  @TestTemplate
-  @Override
-  public void testEqualityDeleteByNull() {
-    skipUnsupported();
-  }
-
-  @TestTemplate
-  @Override
-  public void testEqualityDeleteBinaryColumn() {
-    skipUnsupported();
-  }
-
-  @TestTemplate
-  @Override
-  public void testEqualityDeleteStructColumn() {
-    skipUnsupported();
-  }
-
-  // --- equality-delete and _deleted cases from TestSparkReaderDeletes ---
-
-  @TestTemplate
-  @Override
-  public void testEqualityDeleteWithFilter() {
-    skipUnsupported();
+        "Vortex applies deletes via native scan pushdown (drop-only); the _deleted metadata column "
+            + "with delete files requires retaining and marking rows, which is not supported");
   }
 
   @TestTemplate
   @Override
   public void testReadEqualityDeleteRows() {
-    skipUnsupported();
+    // Uses EqualityDeleteRowReader with byte-range task planning; Vortex interprets split ranges as
+    // row positions, which is a separate limitation from equality-delete read support.
+    Assumptions.abort("EqualityDeleteRowReader uses byte-range splits, unsupported by Vortex");
   }
 
   @TestTemplate
   @Override
   public void testPosDeletesWithDeletedColumn() {
-    skipUnsupported();
+    skipDeletedColumn();
   }
 
   @TestTemplate
   @Override
   public void testEqualityDeleteWithDeletedColumn() {
-    skipUnsupported();
+    skipDeletedColumn();
   }
 
   @TestTemplate
   @Override
   public void testMixedPosAndEqDeletesWithDeletedColumn() {
-    skipUnsupported();
+    skipDeletedColumn();
   }
 
   @TestTemplate
   @Override
   public void testFilterOnDeletedMetadataColumn() {
-    skipUnsupported();
+    skipDeletedColumn();
   }
 }

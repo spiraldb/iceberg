@@ -18,6 +18,9 @@
  */
 package org.apache.iceberg.spark.source;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.List;
 import java.util.Map;
 import javax.annotation.Nonnull;
 import org.apache.iceberg.FileFormat;
@@ -27,6 +30,8 @@ import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.data.DeleteFilter;
+import org.apache.iceberg.deletes.Deletes;
+import org.apache.iceberg.deletes.PositionDeleteIndex;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.formats.FormatModelRegistry;
 import org.apache.iceberg.formats.ReadBuilder;
@@ -35,12 +40,14 @@ import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.OrcBatchReadConf;
 import org.apache.iceberg.spark.ParquetBatchReadConf;
 import org.apache.iceberg.spark.VortexBatchReadConf;
 import org.apache.iceberg.spark.data.vectorized.ColumnVectorWithFilter;
 import org.apache.iceberg.spark.data.vectorized.ColumnarBatchUtil;
 import org.apache.iceberg.spark.data.vectorized.UpdatableDeletedColumnVector;
+import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.Pair;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.vectorized.ColumnVector;
@@ -99,7 +106,7 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
       // post-scan BatchDeleteFilter (which derives row positions from a contiguous _pos column and
       // is unsound once rows are filtered out during the scan) is bypassed entirely.
       return newPushdownBatchIterable(
-          readBuilder, start, length, residual, idToConstant, deleteFilter);
+          inputFile, readBuilder, start, length, residual, idToConstant, deleteFilter);
     }
 
     CloseableIterable<ColumnarBatch> iterable =
@@ -121,10 +128,13 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
   }
 
   // Reads from a format that applies position deletes (and residual filters) natively in the scan.
-  // Position deletes are pushed down so deleted rows are never materialized; only the expected
-  // output columns are projected. Equality deletes and the _deleted metadata column combined with
-  // delete files require post-scan processing that this path does not perform and are rejected.
+  // Every delete is turned into file-relative positions and pushed down so deleted rows are never
+  // materialized: position deletes directly, and equality deletes by a pre-scan that resolves the
+  // matching rows to positions. Only the expected output columns are projected. The _deleted
+  // metadata column combined with delete files requires retaining and marking rows, which this
+  // drop-only path does not do, so that combination is rejected.
   private CloseableIterable<ColumnarBatch> newPushdownBatchIterable(
+      InputFile inputFile,
       ReadBuilder<ColumnarBatch, ?> readBuilder,
       long start,
       long length,
@@ -135,12 +145,14 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
         deleteFilter.requiredSchema().findField(MetadataColumns.IS_DELETED.fieldId()) != null;
     boolean hasDeletes = deleteFilter.hasPosDeletes() || deleteFilter.hasEqDeletes();
     Preconditions.checkArgument(
-        !deleteFilter.hasEqDeletes(), "Equality deletes are not supported for Vortex reads");
-    Preconditions.checkArgument(
         !(isDeletedProjected && hasDeletes),
         "The _deleted metadata column with delete files is not supported for Vortex reads");
 
-    deleteFilter.pushablePosDeletes().ifPresent(readBuilder::positionDeletes);
+    PositionDeleteIndex deletePositions =
+        pushableDeletePositions(inputFile, start, length, residual, idToConstant, deleteFilter);
+    if (deletePositions.isNotEmpty()) {
+      readBuilder.positionDeletes(deletePositions);
+    }
 
     return readBuilder
         .project(deleteFilter.expectedSchema())
@@ -151,6 +163,73 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
         .reuseContainers()
         .withNameMapping(nameMapping())
         .build();
+  }
+
+  // Collects all rows to drop as file-relative positions: the position deletes for the file, plus
+  // the positions of rows matching equality deletes (resolved by a row-oriented pre-scan).
+  private PositionDeleteIndex pushableDeletePositions(
+      InputFile inputFile,
+      long start,
+      long length,
+      Expression residual,
+      Map<Integer, ?> idToConstant,
+      SparkDeleteFilter deleteFilter) {
+    PositionDeleteIndex positions = Deletes.toPositionIndex(CloseableIterable.empty());
+
+    PositionDeleteIndex posDeletes = deleteFilter.deletedRowPositions();
+    if (posDeletes != null) {
+      posDeletes.forEach(positions::delete);
+    }
+
+    if (deleteFilter.hasEqDeletes()) {
+      addEqualityDeletePositions(
+          positions, inputFile, start, length, residual, idToConstant, deleteFilter);
+    }
+
+    return positions;
+  }
+
+  // Pre-scans the data file as rows projecting the equality-delete columns and _pos, evaluates the
+  // equality-delete predicate, and records the file position of every matching row. This lets
+  // equality deletes ride the same native position pushdown as position deletes.
+  private void addEqualityDeletePositions(
+      PositionDeleteIndex positions,
+      InputFile inputFile,
+      long start,
+      long length,
+      Expression residual,
+      Map<Integer, ?> idToConstant,
+      SparkDeleteFilter deleteFilter) {
+    Schema requiredSchema = deleteFilter.requiredSchema();
+    Schema scanSchema = requiredSchema;
+    if (requiredSchema.findField(MetadataColumns.ROW_POSITION.fieldId()) == null) {
+      // The equality-delete predicate binds against requiredSchema; appending _pos at the end keeps
+      // those columns aligned while exposing the position for each matching row.
+      List<Types.NestedField> columns = Lists.newArrayList(requiredSchema.columns());
+      columns.add(MetadataColumns.ROW_POSITION);
+      scanSchema = new Schema(columns);
+    }
+    int rowPositionIndex = scanSchema.columns().indexOf(MetadataColumns.ROW_POSITION);
+
+    ReadBuilder<InternalRow, ?> rowReadBuilder =
+        FormatModelRegistry.readBuilder(FileFormat.VORTEX, InternalRow.class, inputFile);
+    try (CloseableIterable<InternalRow> rows =
+            rowReadBuilder
+                .project(scanSchema)
+                .idToConstant(idToConstant)
+                .split(start, length)
+                .filter(residual)
+                .caseSensitive(caseSensitive())
+                .withNameMapping(nameMapping())
+                .build();
+        CloseableIterable<InternalRow> equalityDeleted =
+            deleteFilter.findEqualityDeleteRows(rows)) {
+      for (InternalRow row : equalityDeleted) {
+        positions.delete(row.getLong(rowPositionIndex));
+      }
+    } catch (IOException e) {
+      throw new UncheckedIOException("Failed to resolve equality-delete positions for Vortex", e);
+    }
   }
 
   @VisibleForTesting

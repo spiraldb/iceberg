@@ -31,9 +31,9 @@ import org.junit.jupiter.api.TestTemplate;
 /**
  * End-to-end merge-on-read DELETE coverage for Vortex tables. A DELETE reads the data with the
  * synthetic {@code _pos} column (wired through Vortex's {@code row_idx} expression) to compute the
- * positions to delete, writes a position-delete file (a Vortex delete file for v2, a deletion vector
- * for v3) through the format-model registry, and the subsequent read excludes the deleted rows via
- * native scan pushdown.
+ * positions to delete, writes a position-delete file (a Vortex delete file for v2, a deletion
+ * vector for v3) through the format-model registry, and the subsequent read excludes the deleted
+ * rows via native scan pushdown.
  */
 public class TestVortexMergeOnReadDelete extends ExtensionsTestBase {
 
@@ -59,9 +59,7 @@ public class TestVortexMergeOnReadDelete extends ExtensionsTestBase {
             + "TBLPROPERTIES ('%s'='vortex', '%s'='%d', '%s'='merge-on-read')",
         tableName, DEFAULT_FILE_FORMAT, FORMAT_VERSION, formatVersion, DELETE_MODE);
 
-    sql(
-        "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')",
-        tableName);
+    sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')", tableName);
 
     sql("DELETE FROM %s WHERE id IN (2, 4)", tableName);
 
