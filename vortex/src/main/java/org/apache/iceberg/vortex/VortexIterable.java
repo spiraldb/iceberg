@@ -26,6 +26,8 @@ import dev.vortex.api.ScanOptions;
 import dev.vortex.api.Session;
 import dev.vortex.jni.NativeRuntime;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -36,7 +38,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.expressions.Expression;
@@ -126,6 +130,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
     ImmutableList.Builder<String> fieldNames = ImmutableList.builder();
     ImmutableList.Builder<dev.vortex.api.Expression> expressions = ImmutableList.builder();
+    org.apache.arrow.vector.types.pojo.Schema readerArrowSchema = fileArrowSchema;
 
     for (String name : projection) {
       if (fileColumns.contains(name)) {
@@ -134,6 +139,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
       } else if (Objects.equals(name, MetadataColumns.ROW_POSITION.name())) {
         fieldNames.add(name);
         expressions.add(dev.vortex.api.Expression.rowIdx());
+        readerArrowSchema = appendRowPosition(fileArrowSchema);
       }
     }
 
@@ -165,12 +171,27 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
         new PartitionBatchIterator(scan, vortexAllocator, allocator);
 
     if (rowReaderFunc != null) {
-      VortexRowReader<T> rowFunction = rowReaderFunc.apply(fileArrowSchema);
+      VortexRowReader<T> rowFunction = rowReaderFunc.apply(readerArrowSchema);
       return new VortexRowIterator<>(batchIterator, rowFunction);
     } else {
-      VortexBatchReader<T> batchTransform = batchReaderFunction.apply(fileArrowSchema);
+      VortexBatchReader<T> batchTransform = batchReaderFunction.apply(readerArrowSchema);
       return new VortexBatchIterator<>(batchIterator, batchTransform);
     }
+  }
+
+  /**
+   * Appends a required {@code _pos} (int64) field to an Arrow schema so readers can bind the
+   * synthetic row-position column produced by the {@code row_idx} scan projection.
+   */
+  private static org.apache.arrow.vector.types.pojo.Schema appendRowPosition(
+      org.apache.arrow.vector.types.pojo.Schema base) {
+    List<Field> fields = new ArrayList<>(base.getFields());
+    fields.add(
+        new Field(
+            MetadataColumns.ROW_POSITION.name(),
+            new FieldType(false, new ArrowType.Int(Long.SIZE, true), null),
+            null));
+    return new org.apache.arrow.vector.types.pojo.Schema(fields, base.getCustomMetadata());
   }
 
   /** Iterator that pulls Arrow {@link VectorSchemaRoot} batches across Vortex partitions. */

@@ -425,8 +425,8 @@ public class VortexFormatModel<D, S, R>
       // Compute the columns to scan from the data file. Constants (identity partition values and
       // metadata columns such as _file, _spec_id and _partition) come from idToConstant, and
       // _is_deleted is synthesized by the reader, so none of those are projected from the file.
-      // _pos is also excluded and currently resolves to null: Vortex exposes row positions through
-      // a `row_idx` scan expression that the Java bindings (<= 0.73.0) do not yet surface.
+      // _pos is excluded here too, but when it is requested it is materialized separately from
+      // Vortex's `row_idx` scan expression (see VortexIterable) rather than read from the file.
       Map<Integer, ?> constants = idToConstant == null ? Collections.emptyMap() : idToConstant;
       List<String> projection =
           schema.columns().stream()
@@ -438,6 +438,10 @@ public class VortexFormatModel<D, S, R>
               .map(Types.NestedField::name)
               .toList();
 
+      boolean includeRowPosition =
+          schema.findField(MetadataColumns.ROW_POSITION.fieldId()) != null
+              && !constants.containsKey(MetadataColumns.ROW_POSITION.fieldId());
+
       byte[] posDeleteBitmap = posDeletes == null ? null : toRoaringBitmap(posDeletes);
 
       return new VortexIterable<>(
@@ -446,6 +450,7 @@ public class VortexFormatModel<D, S, R>
           filterPredicate,
           rowRange,
           posDeleteBitmap,
+          includeRowPosition,
           readerFunc,
           batchReaderFunc,
           caseSensitive,

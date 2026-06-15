@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.util.List;
 import org.apache.iceberg.FileContent;
 import org.apache.iceberg.Files;
+import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
@@ -109,6 +110,51 @@ public class TestVortexPositionDeletes {
     }
 
     assertThat(ids).containsExactlyInAnyOrder(0, 1, 3, 4, 6, 8, 9);
+  }
+
+  @Test
+  public void testRowPositionProjection() throws IOException {
+    InputFile file = writeRows(5);
+
+    Schema projection = new Schema(SCHEMA.columns().get(0), MetadataColumns.ROW_POSITION);
+
+    List<Integer> ids = Lists.newArrayList();
+    List<Long> positions = Lists.newArrayList();
+    try (CloseableIterable<Record> reader =
+        formatModel().readBuilder(file).project(projection).build()) {
+      for (Record record : reader) {
+        ids.add((Integer) record.getField("id"));
+        positions.add((Long) record.getField(MetadataColumns.ROW_POSITION.name()));
+      }
+    }
+
+    assertThat(ids).containsExactly(0, 1, 2, 3, 4);
+    assertThat(positions)
+        .as("_pos should resolve to file-relative row positions via row_idx")
+        .containsExactly(0L, 1L, 2L, 3L, 4L);
+  }
+
+  @Test
+  public void testRowPositionWithPositionDeletes() throws IOException {
+    InputFile file = writeRows(5);
+
+    // Delete positions 1 and 3; the surviving rows keep their original file positions.
+    PositionDeleteIndex deletes =
+        Deletes.toPositionIndex(CloseableIterable.withNoopClose(Lists.newArrayList(1L, 3L)));
+
+    Schema projection = new Schema(SCHEMA.columns().get(0), MetadataColumns.ROW_POSITION);
+
+    List<Long> positions = Lists.newArrayList();
+    try (CloseableIterable<Record> reader =
+        formatModel().readBuilder(file).project(projection).positionDeletes(deletes).build()) {
+      for (Record record : reader) {
+        positions.add((Long) record.getField(MetadataColumns.ROW_POSITION.name()));
+      }
+    }
+
+    assertThat(positions)
+        .as("row_idx reports absolute file positions even after deletes are excluded")
+        .containsExactly(0L, 2L, 4L);
   }
 
   private InputFile writeRows(int count) throws IOException {

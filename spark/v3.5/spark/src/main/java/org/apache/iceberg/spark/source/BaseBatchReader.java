@@ -34,6 +34,7 @@ import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.spark.OrcBatchReadConf;
 import org.apache.iceberg.spark.ParquetBatchReadConf;
 import org.apache.iceberg.spark.VortexBatchReadConf;
@@ -93,6 +94,14 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
       readBuilder = readBuilder.recordsPerBatch(vortexConf.batchSize());
     }
 
+    if (readBuilder.supportsPositionDeletes()) {
+      // Vortex applies position deletes and residual filters natively inside the scan, so the
+      // post-scan BatchDeleteFilter (which derives row positions from a contiguous _pos column and
+      // is unsound once rows are filtered out during the scan) is bypassed entirely.
+      return newPushdownBatchIterable(
+          readBuilder, start, length, residual, idToConstant, deleteFilter);
+    }
+
     CloseableIterable<ColumnarBatch> iterable =
         readBuilder
             .project(deleteFilter.requiredSchema())
@@ -109,6 +118,39 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
             .build();
 
     return CloseableIterable.transform(iterable, new BatchDeleteFilter(deleteFilter)::filterBatch);
+  }
+
+  // Reads from a format that applies position deletes (and residual filters) natively in the scan.
+  // Position deletes are pushed down so deleted rows are never materialized; only the expected
+  // output columns are projected. Equality deletes and the _deleted metadata column combined with
+  // delete files require post-scan processing that this path does not perform and are rejected.
+  private CloseableIterable<ColumnarBatch> newPushdownBatchIterable(
+      ReadBuilder<ColumnarBatch, ?> readBuilder,
+      long start,
+      long length,
+      Expression residual,
+      Map<Integer, ?> idToConstant,
+      SparkDeleteFilter deleteFilter) {
+    boolean isDeletedProjected =
+        deleteFilter.requiredSchema().findField(MetadataColumns.IS_DELETED.fieldId()) != null;
+    boolean hasDeletes = deleteFilter.hasPosDeletes() || deleteFilter.hasEqDeletes();
+    Preconditions.checkArgument(
+        !deleteFilter.hasEqDeletes(), "Equality deletes are not supported for Vortex reads");
+    Preconditions.checkArgument(
+        !(isDeletedProjected && hasDeletes),
+        "The _deleted metadata column with delete files is not supported for Vortex reads");
+
+    deleteFilter.pushablePosDeletes().ifPresent(readBuilder::positionDeletes);
+
+    return readBuilder
+        .project(deleteFilter.expectedSchema())
+        .idToConstant(idToConstant)
+        .split(start, length)
+        .filter(residual)
+        .caseSensitive(caseSensitive())
+        .reuseContainers()
+        .withNameMapping(nameMapping())
+        .build();
   }
 
   @VisibleForTesting
