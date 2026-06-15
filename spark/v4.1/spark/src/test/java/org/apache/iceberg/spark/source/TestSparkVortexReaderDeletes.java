@@ -27,12 +27,12 @@ import org.junit.jupiter.api.TestTemplate;
 /**
  * Exercises the Spark columnar read path for Vortex tables with deletes.
  *
- * <p>Vortex applies all deletes (and residual filters) natively in the scan (see {@code
- * BaseBatchReader.newPushdownBatchIterable}): position deletes are pushed directly, and equality
- * deletes are resolved to positions by a pre-scan and pushed as well. So the position- and
- * equality-delete cases inherited from {@link TestSparkReaderDeletes} run unchanged. Only the
- * {@code _deleted}-metadata-column-with-delete-files cases are skipped: that requires retaining and
- * marking deleted rows, which the drop-only pushdown path does not do.
+ * <p>Vortex applies deletes (and residual filters) natively in the scan (see {@code
+ * BaseBatchReader}): when deleted rows are dropped, position deletes are pushed directly and
+ * equality deletes are resolved to positions by a pre-scan; when the {@code _deleted} column is
+ * projected, rows are retained and flagged from their {@code _pos} instead. So the position-,
+ * equality-, and {@code _deleted}-delete cases inherited from {@link TestSparkReaderDeletes} all
+ * run.
  */
 public class TestSparkVortexReaderDeletes extends TestSparkReaderDeletes {
 
@@ -44,17 +44,11 @@ public class TestSparkVortexReaderDeletes extends TestSparkReaderDeletes {
     };
   }
 
-  // Deletes are dropped inside the Vortex scan, so they never reach Spark and are not reflected in
-  // the NumDeletes metric. Disable delete-count assertions for this path.
+  // Deletes are applied inside the Vortex scan (or marked from _pos), so they never reach Spark and
+  // are not reflected in the NumDeletes metric. Disable delete-count assertions for this path.
   @Override
   protected boolean countDeletes() {
     return false;
-  }
-
-  private static void skipDeletedColumn() {
-    Assumptions.abort(
-        "Vortex applies deletes via native scan pushdown (drop-only); the _deleted metadata column "
-            + "with delete files requires retaining and marking rows, which is not supported");
   }
 
   @TestTemplate
@@ -63,29 +57,5 @@ public class TestSparkVortexReaderDeletes extends TestSparkReaderDeletes {
     // Uses EqualityDeleteRowReader with byte-range task planning; Vortex interprets split ranges as
     // row positions, which is a separate limitation from equality-delete read support.
     Assumptions.abort("EqualityDeleteRowReader uses byte-range splits, unsupported by Vortex");
-  }
-
-  @TestTemplate
-  @Override
-  public void testPosDeletesWithDeletedColumn() {
-    skipDeletedColumn();
-  }
-
-  @TestTemplate
-  @Override
-  public void testEqualityDeleteWithDeletedColumn() {
-    skipDeletedColumn();
-  }
-
-  @TestTemplate
-  @Override
-  public void testMixedPosAndEqDeletesWithDeletedColumn() {
-    skipDeletedColumn();
-  }
-
-  @TestTemplate
-  @Override
-  public void testFilterOnDeletedMetadataColumn() {
-    skipDeletedColumn();
   }
 }
