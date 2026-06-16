@@ -19,7 +19,6 @@
 package org.apache.iceberg.vortex;
 
 import dev.vortex.arrow.ArrowAllocation;
-import java.util.ArrayList;
 import java.util.List;
 import org.apache.arrow.c.ArrowArray;
 import org.apache.arrow.c.ArrowSchema;
@@ -30,6 +29,7 @@ import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.UInt8Vector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 
 final class VortexArrowBridge {
   private static final RootAllocator ARROW_ALLOCATOR = new RootAllocator(Long.MAX_VALUE);
@@ -79,7 +79,7 @@ final class VortexArrowBridge {
       return imported;
     }
 
-    List<FieldVector> vectors = new ArrayList<>(imported.getFieldVectors().size());
+    List<FieldVector> vectors = Lists.newArrayListWithCapacity(imported.getFieldVectors().size());
     for (FieldVector vector : imported.getFieldVectors()) {
       if (vector instanceof UInt8Vector) {
         vectors.add(copyAsSigned((UInt8Vector) vector, allocator));

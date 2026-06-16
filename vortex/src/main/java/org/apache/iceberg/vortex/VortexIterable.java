@@ -48,6 +48,7 @@ import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -192,7 +193,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
    */
   private static org.apache.arrow.vector.types.pojo.Schema appendRowPosition(
       org.apache.arrow.vector.types.pojo.Schema base) {
-    List<Field> fields = new ArrayList<>(base.getFields());
+    List<Field> fields = Lists.newArrayList(base.getFields());
     fields.add(
         new Field(
             MetadataColumns.ROW_POSITION.name(),
