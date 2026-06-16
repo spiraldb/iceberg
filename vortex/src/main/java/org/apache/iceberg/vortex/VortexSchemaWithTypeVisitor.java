@@ -50,7 +50,7 @@ public abstract class VortexSchemaWithTypeVisitor<T> {
   }
 
   public static <T> T visit(Type iType, Field field, VortexSchemaWithTypeVisitor<T> visitor) {
-    if ((iType != null && iType.isVariantType()) || VortexSchemas.isVariantField(field)) {
+    if (isVariant(iType, field)) {
       return visitor.variant(iType != null ? iType.asVariantType() : null, field);
     }
 
@@ -67,6 +67,10 @@ public abstract class VortexSchemaWithTypeVisitor<T> {
     } else {
       return visitor.primitive(iType != null ? iType.asPrimitiveType() : null, field);
     }
+  }
+
+  private static boolean isVariant(Type iType, Field field) {
+    return (iType != null && iType.isVariantType()) || VortexSchemas.isVariantField(field);
   }
 
   private static <T> T visitStruct(

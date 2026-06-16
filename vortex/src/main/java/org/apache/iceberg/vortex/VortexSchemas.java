@@ -486,32 +486,7 @@ public final class VortexSchemas {
             children.build());
       }
       case VARIANT -> {
-        Map<String, String> extMetadata =
-            ImmutableMap.of(
-                ArrowType.ExtensionType.EXTENSION_METADATA_KEY_NAME,
-                VARIANT_EXTENSION_NAME,
-                ArrowType.ExtensionType.EXTENSION_METADATA_KEY_METADATA,
-                "");
-
-        ImmutableList.Builder<dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field>
-            children = ImmutableList.builder();
-        children.add(
-            toVortexArrowField(
-                "metadata",
-                new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary(),
-                false));
-        children.add(
-            toVortexArrowField(
-                "value",
-                new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary(),
-                true));
-
-        yield toVortexArrowField(
-            name,
-            new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Struct(),
-            nullable,
-            extMetadata,
-            children.build());
+        yield toVortexVariantArrowField(name, nullable);
       }
       default ->
           throw new UnsupportedOperationException(
@@ -539,17 +514,45 @@ public final class VortexSchemas {
         children);
   }
 
+  private static dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field
+      toVortexVariantArrowField(String name, boolean nullable) {
+    Map<String, String> extMetadata =
+        ImmutableMap.of(
+            dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.ExtensionType
+                .EXTENSION_METADATA_KEY_NAME,
+            VARIANT_EXTENSION_NAME,
+            dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.ExtensionType
+                .EXTENSION_METADATA_KEY_METADATA,
+            "");
+
+    ImmutableList.Builder<dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field> children =
+        ImmutableList.builder();
+    children.add(
+        toVortexArrowField(
+            "metadata",
+            new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary(),
+            false));
+    children.add(
+        toVortexArrowField(
+            "value",
+            new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary(),
+            true));
+
+    return toVortexArrowField(
+        name,
+        new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Struct(),
+        nullable,
+        extMetadata,
+        children.build());
+  }
+
   private static Type toIcebergType(Field field, AtomicInteger nextId) {
     // UUID is conveyed as the {@code arrow.uuid} extension over
     // FixedSizeBinary(16). Check metadata directly so this works whether or not
     // the extension is registered with ExtensionTypeRegistry.
-    if (isUuidField(field)) {
-      return Types.UUIDType.get();
-    }
-
-    if (isVariantField(field)) {
-      validateVariantField(field);
-      return Types.VariantType.get();
+    Type extensionType = toIcebergExtensionType(field);
+    if (extensionType != null) {
+      return extensionType;
     }
 
     ArrowType arrowType = field.getType();
@@ -573,14 +576,24 @@ public final class VortexSchemas {
     return toIcebergSimpleType(arrowType);
   }
 
-  private static Type toIcebergType(
-      dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field field, AtomicInteger nextId) {
+  private static Type toIcebergExtensionType(Field field) {
     if (isUuidField(field)) {
       return Types.UUIDType.get();
     }
 
     if (isVariantField(field)) {
+      validateVariantField(field);
       return Types.VariantType.get();
+    }
+
+    return null;
+  }
+
+  private static Type toIcebergType(
+      dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field field, AtomicInteger nextId) {
+    Type extensionType = toIcebergExtensionType(field);
+    if (extensionType != null) {
+      return extensionType;
     }
 
     dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType arrowType = field.getType();
@@ -616,6 +629,19 @@ public final class VortexSchemas {
       return Types.StructType.of(convertVortexFields(field.getChildren(), nextId));
     }
     return toIcebergSimpleType(arrowType);
+  }
+
+  private static Type toIcebergExtensionType(
+      dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field field) {
+    if (isUuidField(field)) {
+      return Types.UUIDType.get();
+    }
+
+    if (isVariantField(field)) {
+      return Types.VariantType.get();
+    }
+
+    return null;
   }
 
   private static Type toIcebergSimpleType(ArrowType arrowType) {
