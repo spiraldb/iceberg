@@ -121,9 +121,8 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
             .map(Field::getName)
             .collect(Collectors.toUnmodifiableSet());
 
-    ImmutableList.Builder<String> fieldNames = new ImmutableList.Builder<String>();
-    ImmutableList.Builder<dev.vortex.api.Expression> expressions =
-        new ImmutableList.Builder<dev.vortex.api.Expression>();
+    ImmutableList.Builder<String> fieldNames = ImmutableList.builder();
+    ImmutableList.Builder<dev.vortex.api.Expression> expressions = ImmutableList.builder();
 
     for (String name : projection) {
       if (fileColumns.contains(name)) {
