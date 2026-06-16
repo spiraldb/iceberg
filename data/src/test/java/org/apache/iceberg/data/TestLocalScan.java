@@ -338,8 +338,6 @@ public class TestLocalScan {
 
   @TestTemplate
   public void testProjectWithSchema() {
-    assumeThat(format != FileFormat.VORTEX).isTrue();
-
     // Test with table schema
     Iterable<Record> results = IcebergGenerics.read(sharedTable).project(SCHEMA).build();
 
