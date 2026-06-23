@@ -18,10 +18,11 @@
  */
 package org.apache.iceberg.spark.source;
 
+import static org.assertj.core.api.Assumptions.assumeThat;
+
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.Parameters;
 import org.apache.iceberg.PlanningMode;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.TestTemplate;
 
 /**
@@ -56,6 +57,6 @@ public class TestSparkVortexReaderDeletes extends TestSparkReaderDeletes {
   public void testReadEqualityDeleteRows() {
     // Uses EqualityDeleteRowReader with byte-range task planning; Vortex interprets split ranges as
     // row positions, which is a separate limitation from equality-delete read support.
-    Assumptions.abort("EqualityDeleteRowReader uses byte-range splits, unsupported by Vortex");
+    assumeThat(false).isTrue();
   }
 }
