@@ -29,7 +29,6 @@ import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.spark.SparkUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.vortex.VortexBatchReader;
-import org.apache.spark.sql.vectorized.ArrowColumnVector;
 import org.apache.spark.sql.vectorized.ColumnVector;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
 
@@ -73,7 +72,7 @@ public class VectorizedSparkVortexReaders {
         Types.NestedField field = columns.get(i);
         int columnIndex = batchColumnIndex[i];
         if (columnIndex >= 0) {
-          vectors[i] = new ArrowColumnVector(fieldVectors.get(columnIndex));
+          vectors[i] = new VortexArrowColumnVector(fieldVectors.get(columnIndex));
         } else if (idToConstant.containsKey(field.fieldId())) {
           vectors[i] =
               new ConstantColumnVector(field.type(), rowCount, idToConstant.get(field.fieldId()));

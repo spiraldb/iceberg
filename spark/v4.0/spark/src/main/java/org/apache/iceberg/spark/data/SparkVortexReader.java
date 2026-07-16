@@ -173,8 +173,8 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
         case LONG -> GenericVortexReaders.longs();
         case FLOAT -> GenericVortexReaders.floats();
         case DOUBLE -> GenericVortexReaders.doubles();
-        case STRING -> SparkVortexValueReaders.utf8String();
-        case BINARY -> SparkVortexValueReaders.bytes();
+        case STRING -> SparkVortexValueReaders.utf8String(primField.getType());
+        case BINARY -> SparkVortexValueReaders.bytes(primField.getType());
         case DECIMAL -> GenericVortexReaders.decimals();
         case TIMESTAMP, TIMESTAMP_NANO -> {
           ArrowType.Timestamp ts = (ArrowType.Timestamp) primField.getType();

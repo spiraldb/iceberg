@@ -18,7 +18,9 @@
  */
 package org.apache.iceberg.vortex;
 
+import dev.vortex.api.VortexWriteSummary;
 import dev.vortex.api.VortexWriter;
+import dev.vortex.io.NativeWritable;
 import java.io.IOException;
 import org.apache.arrow.c.ArrowArray;
 import org.apache.arrow.c.ArrowSchema;
@@ -29,7 +31,7 @@ import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.iceberg.Metrics;
 import org.apache.iceberg.MetricsConfig;
 import org.apache.iceberg.io.FileAppender;
-import org.apache.iceberg.io.OutputFile;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 
 /**
  * A {@link FileAppender} that writes data to Vortex files via the Arrow C-data interface.
@@ -37,6 +39,10 @@ import org.apache.iceberg.io.OutputFile;
  * <p>Rows are buffered in an Arrow {@link VectorSchemaRoot} and flushed to the underlying {@link
  * VortexWriter} when the batch reaches the configured size, by exporting each batch through the
  * Arrow C-data interface as a pair of {@code (array, schema)} pointers.
+ *
+ * <p>The appender owns the {@link NativeWritable} byte sink the writer streams into: closing the
+ * appender finalizes the Vortex file and then closes the sink. Iceberg {@link Metrics} are built
+ * from the {@link VortexWriteSummary} statistics computed natively during the write.
  */
 class VortexFileAppender<D> implements FileAppender<D> {
   static final int DEFAULT_BATCH_SIZE = 2048;
@@ -46,12 +52,14 @@ class VortexFileAppender<D> implements FileAppender<D> {
   private final BufferAllocator allocator;
   private final VectorSchemaRoot root;
   private final int batchSize;
-  private final OutputFile outputFile;
-  private final VortexMetrics.Accumulator metricsAccumulator;
+  private final NativeWritable outputStream;
+  private final org.apache.iceberg.Schema icebergSchema;
+  private final MetricsConfig metricsConfig;
 
   private int currentBatchIndex = 0;
-  private long totalRowCount = 0;
   private boolean closed = false;
+  private VortexWriteSummary summary = null;
+  private Metrics metrics = null;
 
   VortexFileAppender(
       VortexWriter writer,
@@ -59,7 +67,7 @@ class VortexFileAppender<D> implements FileAppender<D> {
       Schema arrowSchema,
       BufferAllocator allocator,
       int batchSize,
-      OutputFile outputFile,
+      NativeWritable outputStream,
       org.apache.iceberg.Schema icebergSchema,
       MetricsConfig metricsConfig) {
     this.writer = writer;
@@ -67,8 +75,9 @@ class VortexFileAppender<D> implements FileAppender<D> {
     this.allocator = allocator != null ? allocator : VortexArrowBridge.arrowAllocator();
     this.root = VectorSchemaRoot.create(arrowSchema, this.allocator);
     this.batchSize = batchSize;
-    this.outputFile = outputFile;
-    this.metricsAccumulator = new VortexMetrics.Accumulator(icebergSchema, metricsConfig);
+    this.outputStream = outputStream;
+    this.icebergSchema = icebergSchema;
+    this.metricsConfig = metricsConfig;
   }
 
   @Override
@@ -79,7 +88,6 @@ class VortexFileAppender<D> implements FileAppender<D> {
 
     valueWriter.write(datum, root, currentBatchIndex);
     currentBatchIndex++;
-    totalRowCount++;
 
     if (currentBatchIndex >= batchSize) {
       flushBatch();
@@ -92,7 +100,6 @@ class VortexFileAppender<D> implements FileAppender<D> {
     }
 
     root.setRowCount(currentBatchIndex);
-    metricsAccumulator.add(root, currentBatchIndex);
 
     try (ArrowArray cArray = ArrowArray.allocateNew(allocator);
         ArrowSchema cSchema = ArrowSchema.allocateNew(allocator)) {
@@ -108,16 +115,23 @@ class VortexFileAppender<D> implements FileAppender<D> {
 
   @Override
   public Metrics metrics() {
-    return metricsAccumulator.metrics(totalRowCount);
+    Preconditions.checkState(closed, "Cannot return metrics while appending to an open file");
+    Preconditions.checkState(summary != null, "Vortex writer did not produce a write summary");
+    if (metrics == null) {
+      metrics = VortexMetrics.fromWriteSummary(icebergSchema, metricsConfig, summary);
+    }
+
+    return metrics;
   }
 
   @Override
   public long length() {
     if (closed) {
-      return outputFile.toInputFile().getLength();
+      Preconditions.checkState(summary != null, "Vortex writer did not produce a write summary");
+      return summary.fileSize();
     }
 
-    return 0;
+    return writer.bytesWritten();
   }
 
   @Override
@@ -125,11 +139,15 @@ class VortexFileAppender<D> implements FileAppender<D> {
     if (!closed) {
       try {
         flushBatch();
-        writer.close();
+        this.summary = writer.finish();
       } finally {
-        root.close();
-        // Don't close `allocator`: it is shared for the lifetime of the process.
         closed = true;
+        try {
+          root.close();
+          // Don't close `allocator`: it is shared for the lifetime of the process.
+        } finally {
+          outputStream.close();
+        }
       }
     }
   }

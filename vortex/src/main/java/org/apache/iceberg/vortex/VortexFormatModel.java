@@ -20,6 +20,7 @@ package org.apache.iceberg.vortex;
 
 import dev.vortex.api.Session;
 import dev.vortex.api.VortexWriter;
+import dev.vortex.io.NativeWritable;
 import dev.vortex.jni.NativeRuntime;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -50,10 +51,8 @@ import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.DeleteSchemaUtil;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.io.InputFile;
-import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
-import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Types;
 import org.roaringbitmap.longlong.Roaring64NavigableMap;
 
@@ -138,8 +137,6 @@ public class VortexFormatModel<D, S, R>
     private S engineSchema;
     private FileContent content;
     private MetricsConfig metricsConfig = MetricsConfig.getDefault();
-    private final Map<String, String> writerProperties = Maps.newHashMap();
-    private final Map<String, String> metadata = Maps.newHashMap();
     private int workerThreads = TableProperties.VORTEX_WORKER_THREADS_DEFAULT;
 
     private WriteBuilderWrapper(
@@ -167,7 +164,6 @@ public class VortexFormatModel<D, S, R>
         workerThreads = Integer.parseInt(value);
       }
 
-      writerProperties.put(property, value);
       return this;
     }
 
@@ -179,13 +175,12 @@ public class VortexFormatModel<D, S, R>
 
     @Override
     public ModelWriteBuilder<D, S> meta(String property, String value) {
-      metadata.put(property, value);
+      // Vortex files carry no user-defined key/value metadata.
       return this;
     }
 
     @Override
     public ModelWriteBuilder<D, S> meta(Map<String, String> properties) {
-      metadata.putAll(properties);
       return this;
     }
 
@@ -237,54 +232,24 @@ public class VortexFormatModel<D, S, R>
     private FileAppender<D> buildAppender(org.apache.iceberg.Schema writeSchema)
         throws IOException {
       Schema arrowSchema = VortexSchemas.toArrowSchema(writeSchema);
-      dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Schema vortexSchema =
-          VortexSchemas.toVortexArrowSchema(writeSchema);
-
       VortexValueWriter<D> valueWriter =
           (VortexValueWriter<D>) writerFunction.write(writeSchema, arrowSchema, engineSchema);
-
-      OutputFile rawOutputFile = outputFile.encryptingOutputFile();
-      String uri = VortexFileUtil.resolveUri(rawOutputFile.location());
-      Map<String, String> properties =
-          Maps.newHashMap(VortexFileUtil.resolveOutputProperties(rawOutputFile));
-      properties.putAll(writerProperties);
-      properties.putAll(metadata);
-
-      // Apply worker-thread setting on this executor JVM before any Vortex native work begins.
-      NativeRuntime.setWorkerThreads(workerThreads);
-      BufferAllocator allocator = VortexArrowBridge.arrowAllocator();
-      dev.vortex.relocated.org.apache.arrow.memory.BufferAllocator vortexAllocator =
-          VortexArrowBridge.vortexAllocator();
-      Session session = Session.create();
-      VortexWriter vortexWriter =
-          VortexWriter.create(session, uri, vortexSchema, properties, vortexAllocator);
-
-      return new VortexFileAppender<>(
-          vortexWriter,
-          valueWriter,
-          arrowSchema,
-          allocator,
-          VortexFileAppender.DEFAULT_BATCH_SIZE,
-          rawOutputFile,
-          writeSchema,
-          metricsConfig);
+      return newAppender(writeSchema, arrowSchema, valueWriter);
     }
 
     @SuppressWarnings("unchecked")
     private FileAppender<D> buildPosDeleteAppender() throws IOException {
       org.apache.iceberg.Schema posDeleteSchema = DeleteSchemaUtil.pathPosSchema();
       Schema arrowSchema = VortexSchemas.toArrowSchema(posDeleteSchema);
-      dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Schema vortexSchema =
-          VortexSchemas.toVortexArrowSchema(posDeleteSchema);
-
       VortexValueWriter<D> valueWriter = (VortexValueWriter<D>) new PositionDeleteVortexWriter<>();
+      return newAppender(posDeleteSchema, arrowSchema, valueWriter);
+    }
 
-      OutputFile rawOutputFile = outputFile.encryptingOutputFile();
-      String uri = VortexFileUtil.resolveUri(rawOutputFile.location());
-      Map<String, String> properties =
-          Maps.newHashMap(VortexFileUtil.resolveOutputProperties(rawOutputFile));
-      properties.putAll(writerProperties);
-      properties.putAll(metadata);
+    private FileAppender<D> newAppender(
+        org.apache.iceberg.Schema writeSchema, Schema arrowSchema, VortexValueWriter<D> valueWriter)
+        throws IOException {
+      dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Schema vortexSchema =
+          VortexSchemas.toVortexArrowSchema(writeSchema);
 
       // Apply worker-thread setting on this executor JVM before any Vortex native work begins.
       NativeRuntime.setWorkerThreads(workerThreads);
@@ -292,8 +257,21 @@ public class VortexFormatModel<D, S, R>
       dev.vortex.relocated.org.apache.arrow.memory.BufferAllocator vortexAllocator =
           VortexArrowBridge.vortexAllocator();
       Session session = Session.create();
-      VortexWriter vortexWriter =
-          VortexWriter.create(session, uri, vortexSchema, properties, vortexAllocator);
+
+      // Stream the file through the table's FileIO instead of Vortex's native storage clients.
+      // The appender owns the sink and closes it after the writer is finalized.
+      NativeWritable outputStream = VortexIO.writable(outputFile.encryptingOutputFile());
+      VortexWriter vortexWriter;
+      try {
+        vortexWriter = VortexWriter.create(session, outputStream, vortexSchema, vortexAllocator);
+      } catch (IOException | RuntimeException e) {
+        try {
+          outputStream.close();
+        } catch (IOException suppressed) {
+          e.addSuppressed(suppressed);
+        }
+        throw e;
+      }
 
       return new VortexFileAppender<>(
           vortexWriter,
@@ -301,8 +279,8 @@ public class VortexFormatModel<D, S, R>
           arrowSchema,
           allocator,
           VortexFileAppender.DEFAULT_BATCH_SIZE,
-          rawOutputFile,
-          posDeleteSchema,
+          outputStream,
+          writeSchema,
           metricsConfig);
     }
   }

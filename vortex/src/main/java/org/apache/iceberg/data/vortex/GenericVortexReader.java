@@ -206,8 +206,12 @@ public class GenericVortexReader implements VortexRowReader<Record> {
         return GenericVortexReaders.bools();
       } else if (arrowType instanceof ArrowType.Decimal) {
         return GenericVortexReaders.decimals();
+      } else if (arrowType instanceof ArrowType.Utf8View) {
+        return GenericVortexReaders.stringsView();
       } else if (arrowType instanceof ArrowType.Utf8 || arrowType instanceof ArrowType.LargeUtf8) {
         return GenericVortexReaders.strings();
+      } else if (arrowType instanceof ArrowType.BinaryView) {
+        return GenericVortexReaders.bytesView();
       } else if (arrowType instanceof ArrowType.Binary
           || arrowType instanceof ArrowType.LargeBinary
           || arrowType instanceof ArrowType.FixedSizeBinary) {

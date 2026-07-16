@@ -24,10 +24,11 @@ import dev.vortex.api.Partition;
 import dev.vortex.api.Scan;
 import dev.vortex.api.ScanOptions;
 import dev.vortex.api.Session;
+import dev.vortex.io.NativeReadable;
 import dev.vortex.jni.NativeRuntime;
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
-import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
@@ -99,9 +100,23 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     NativeRuntime.setWorkerThreads(workerThreads);
 
     Session session = Session.create();
-    String uri = VortexFileUtil.resolveUri(inputFile.location());
-    Map<String, String> properties = VortexFileUtil.resolveInputProperties(inputFile);
-    DataSource dataSource = DataSource.open(session, uri, properties);
+    // Read through the table's FileIO instead of Vortex's native storage clients. The returned
+    // iterator owns the readable and closes it when the scan is exhausted or abandoned.
+    NativeReadable readable = VortexIO.readable(inputFile);
+    try {
+      return open(session, readable);
+    } catch (RuntimeException e) {
+      try {
+        readable.close();
+      } catch (IOException suppressed) {
+        e.addSuppressed(suppressed);
+      }
+      throw e;
+    }
+  }
+
+  private CloseableIterator<T> open(Session session, NativeReadable readable) {
+    DataSource dataSource = DataSource.open(session, readable);
 
     dev.vortex.relocated.org.apache.arrow.memory.BufferAllocator vortexAllocator =
         VortexArrowBridge.vortexAllocator();
@@ -175,7 +190,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     Preconditions.checkNotNull(scan, "scan");
 
     PartitionBatchIterator batchIterator =
-        new PartitionBatchIterator(scan, vortexAllocator, allocator);
+        new PartitionBatchIterator(scan, vortexAllocator, allocator, readable);
 
     if (rowReaderFunc != null) {
       VortexRowReader<T> rowFunction = rowReaderFunc.apply(readerArrowSchema);
@@ -206,6 +221,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     private final Scan scan;
     private final dev.vortex.relocated.org.apache.arrow.memory.BufferAllocator vortexAllocator;
     private final BufferAllocator allocator;
+    private final Closeable inputSource;
     private dev.vortex.relocated.org.apache.arrow.vector.ipc.ArrowReader currentReader;
     private VectorSchemaRoot currentRoot;
     private boolean hasPending = false;
@@ -214,10 +230,12 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     PartitionBatchIterator(
         Scan scan,
         dev.vortex.relocated.org.apache.arrow.memory.BufferAllocator vortexAllocator,
-        BufferAllocator allocator) {
+        BufferAllocator allocator,
+        Closeable inputSource) {
       this.scan = scan;
       this.vortexAllocator = vortexAllocator;
       this.allocator = allocator;
+      this.inputSource = inputSource;
     }
 
     @Override
@@ -268,12 +286,17 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
     @Override
     public void close() throws IOException {
-      closeCurrentRoot();
-      if (currentReader != null) {
-        currentReader.close();
-        currentReader = null;
+      try {
+        closeCurrentRoot();
+        if (currentReader != null) {
+          currentReader.close();
+          currentReader = null;
+        }
+        // Don't close shared allocators; they are managed for the lifetime of the process.
+      } finally {
+        // All scans over the input source are done; release its underlying streams.
+        inputSource.close();
       }
-      // Don't close shared allocators; they are managed for the lifetime of the process.
     }
 
     private void closeCurrentRoot() {
