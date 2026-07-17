@@ -22,6 +22,7 @@ import dev.vortex.api.VortexWriteSummary;
 import dev.vortex.api.VortexWriter;
 import dev.vortex.io.NativeWritable;
 import java.io.IOException;
+import java.util.List;
 import org.apache.arrow.c.ArrowArray;
 import org.apache.arrow.c.ArrowSchema;
 import org.apache.arrow.c.Data;
@@ -32,6 +33,7 @@ import org.apache.iceberg.Metrics;
 import org.apache.iceberg.MetricsConfig;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 
 /**
  * A {@link FileAppender} that writes data to Vortex files via the Arrow C-data interface.
@@ -55,8 +57,19 @@ class VortexFileAppender<D> implements FileAppender<D> {
   private final NativeWritable outputStream;
   private final org.apache.iceberg.Schema icebergSchema;
   private final MetricsConfig metricsConfig;
+  private final long splitSize;
+
+  // Nominal per-row width used to size rows buffered before the first batch is handed to the
+  // native writer, so rolling writers see a non-zero length as soon as rows are buffered.
+  private static final long PRE_FLUSH_ROW_SIZE_ESTIMATE = 8;
+
+  // Lower bound for the split-offset granularity so the persisted offset list stays small even
+  // when the configured split size is tiny.
+  private static final long MIN_SPLIT_SIZE = 1024;
 
   private int currentBatchIndex = 0;
+  private long flushedRows = 0;
+  private long flushedArrowBytes = 0;
   private boolean closed = false;
   private VortexWriteSummary summary = null;
   private Metrics metrics = null;
@@ -69,7 +82,8 @@ class VortexFileAppender<D> implements FileAppender<D> {
       int batchSize,
       NativeWritable outputStream,
       org.apache.iceberg.Schema icebergSchema,
-      MetricsConfig metricsConfig) {
+      MetricsConfig metricsConfig,
+      long splitSize) {
     this.writer = writer;
     this.valueWriter = valueWriter;
     this.allocator = allocator != null ? allocator : VortexArrowBridge.arrowAllocator();
@@ -78,6 +92,7 @@ class VortexFileAppender<D> implements FileAppender<D> {
     this.outputStream = outputStream;
     this.icebergSchema = icebergSchema;
     this.metricsConfig = metricsConfig;
+    this.splitSize = Math.max(splitSize, MIN_SPLIT_SIZE);
   }
 
   @Override
@@ -100,6 +115,8 @@ class VortexFileAppender<D> implements FileAppender<D> {
     }
 
     root.setRowCount(currentBatchIndex);
+    flushedRows += currentBatchIndex;
+    flushedArrowBytes += arrowBufferSize();
 
     try (ArrowArray cArray = ArrowArray.allocateNew(allocator);
         ArrowSchema cSchema = ArrowSchema.allocateNew(allocator)) {
@@ -111,6 +128,15 @@ class VortexFileAppender<D> implements FileAppender<D> {
 
     root.clear();
     currentBatchIndex = 0;
+  }
+
+  private long arrowBufferSize() {
+    long size = 0;
+    for (org.apache.arrow.vector.FieldVector vector : root.getFieldVectors()) {
+      size += vector.getBufferSize();
+    }
+
+    return size;
   }
 
   @Override
@@ -125,13 +151,37 @@ class VortexFileAppender<D> implements FileAppender<D> {
   }
 
   @Override
+  public List<Long> splitOffsets() {
+    if (!closed || summary == null) {
+      return null;
+    }
+
+    // Vortex files have no physical split-offset metadata, so persist synthetic byte offsets at
+    // the configured granularity. Readers approximate byte ranges to row ranges by file fraction,
+    // so any strictly ascending offsets partition the rows without gaps or overlaps.
+    ImmutableList.Builder<Long> offsets = ImmutableList.builder();
+    for (long offset = 0; offset == 0 || offset < summary.fileSize(); offset += splitSize) {
+      offsets.add(offset);
+    }
+
+    return offsets.build();
+  }
+
+  @Override
   public long length() {
     if (closed) {
       Preconditions.checkState(summary != null, "Vortex writer did not produce a write summary");
       return summary.fileSize();
     }
 
-    return writer.bytesWritten();
+    // The native writer compresses and flushes asynchronously, so the bytes that reached the sink
+    // lag the rows accepted by this appender. Estimate the volume of rows still buffered (in the
+    // current Arrow batch and the native writer) from the uncompressed Arrow bytes handed over so
+    // far, so that rolling writers see the file grow as rows are appended.
+    long avgRowSize =
+        flushedRows > 0 ? flushedArrowBytes / flushedRows : PRE_FLUSH_ROW_SIZE_ESTIMATE;
+    long bufferedEstimate = flushedArrowBytes + (currentBatchIndex * avgRowSize);
+    return Math.max(writer.bytesWritten(), bufferedEstimate);
   }
 
   @Override

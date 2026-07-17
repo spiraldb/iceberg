@@ -55,8 +55,8 @@ final class VortexMetrics {
    * <p>Vortex reports statistics per top-level column, in Arrow schema order (which matches {@code
    * schema.columns()}). Counts and bounds are emitted for primitive and variant top-level fields;
    * fields nested inside structs, lists, and maps carry no per-field statistics. Column sizes are
-   * recorded for every top-level field regardless of the configured metrics mode, matching how
-   * Parquet footer metrics are collected.
+   * recorded for every top-level field unless the field's metrics mode is {@code none}, matching
+   * how Parquet footer metrics are collected.
    */
   @SuppressWarnings("checkstyle:CyclomaticComplexity")
   static Metrics fromWriteSummary(
@@ -76,12 +76,12 @@ final class VortexMetrics {
       int id = field.fieldId();
       Type type = field.type();
 
-      columnSizes.put(id, colStats.compressedSize());
-
       MetricsModes.MetricsMode mode = MetricsUtil.metricsMode(schema, metricsConfig, id);
       if (mode == MetricsModes.None.get()) {
         continue;
       }
+
+      columnSizes.put(id, colStats.compressedSize());
 
       // Vortex only computes row-level statistics for top-level columns, so struct columns (whose
       // metrics would belong to their nested fields) are skipped entirely.
@@ -130,7 +130,7 @@ final class VortexMetrics {
 
     return new Metrics(
         summary.rowCount(),
-        columnSizes.isEmpty() ? null : columnSizes,
+        columnSizes,
         valueCounts,
         nullValueCounts,
         nanValueCounts.isEmpty() ? null : nanValueCounts,

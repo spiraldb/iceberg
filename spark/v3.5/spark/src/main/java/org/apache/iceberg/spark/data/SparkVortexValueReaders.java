@@ -21,6 +21,7 @@ package org.apache.iceberg.spark.data;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.DateDayVector;
 import org.apache.arrow.vector.DateMilliVector;
+import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.ExtensionTypeVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.FixedSizeBinaryVector;
@@ -39,6 +40,7 @@ import org.apache.iceberg.util.UUIDUtil;
 import org.apache.iceberg.vortex.VortexValueReader;
 import org.apache.spark.sql.catalyst.util.ArrayData;
 import org.apache.spark.sql.catalyst.util.GenericArrayData;
+import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.unsafe.types.UTF8String;
 
 public class SparkVortexValueReaders {
@@ -57,6 +59,11 @@ public class SparkVortexValueReaders {
     return arrowType instanceof ArrowType.BinaryView
         ? BytesViewReader.INSTANCE
         : BytesReader.INSTANCE;
+  }
+
+  /** Spark represents DecimalType as {@link Decimal}, not {@link java.math.BigDecimal}. */
+  public static VortexValueReader<Decimal> decimals() {
+    return DecimalReader.INSTANCE;
   }
 
   public static VortexValueReader<Integer> date() {
@@ -144,6 +151,17 @@ public class SparkVortexValueReaders {
     @Override
     public byte[] readNonNull(FieldVector vector, int row) {
       return ((ViewVarBinaryVector) vector).get(row);
+    }
+  }
+
+  static class DecimalReader implements VortexValueReader<Decimal> {
+    static final DecimalReader INSTANCE = new DecimalReader();
+
+    private DecimalReader() {}
+
+    @Override
+    public Decimal readNonNull(FieldVector vector, int row) {
+      return Decimal.apply(((DecimalVector) vector).getObject(row));
     }
   }
 

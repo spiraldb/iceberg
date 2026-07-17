@@ -138,6 +138,7 @@ public class VortexFormatModel<D, S, R>
     private FileContent content;
     private MetricsConfig metricsConfig = MetricsConfig.getDefault();
     private int workerThreads = TableProperties.VORTEX_WORKER_THREADS_DEFAULT;
+    private long splitSize = TableProperties.WRITE_VORTEX_SPLIT_SIZE_DEFAULT;
 
     private WriteBuilderWrapper(
         EncryptedOutputFile outputFile,
@@ -162,6 +163,8 @@ public class VortexFormatModel<D, S, R>
     public ModelWriteBuilder<D, S> set(String property, String value) {
       if (TableProperties.WRITE_VORTEX_WORKER_THREADS.equals(property)) {
         workerThreads = Integer.parseInt(value);
+      } else if (TableProperties.WRITE_VORTEX_SPLIT_SIZE.equals(property)) {
+        splitSize = Long.parseLong(value);
       }
 
       return this;
@@ -281,7 +284,8 @@ public class VortexFormatModel<D, S, R>
           VortexFileAppender.DEFAULT_BATCH_SIZE,
           outputStream,
           writeSchema,
-          metricsConfig);
+          metricsConfig,
+          splitSize);
     }
   }
 
@@ -294,9 +298,10 @@ public class VortexFormatModel<D, S, R>
     private Map<Integer, ?> idToConstant;
     private Optional<Expression> filterPredicate = Optional.empty();
     private boolean caseSensitive = true;
-    private long[] rowRange;
+    private long[] splitByteRange;
     private PositionDeleteIndex posDeletes;
     private int workerThreads = TableProperties.VORTEX_WORKER_THREADS_DEFAULT;
+    private boolean reuseContainers = false;
 
     private ReadBuilderWrapper(
         InputFile inputFile,
@@ -309,7 +314,9 @@ public class VortexFormatModel<D, S, R>
 
     @Override
     public ReadBuilder<D, S> split(long newStart, long newLength) {
-      this.rowRange = new long[] {newStart, newStart + newLength};
+      // Iceberg plans splits as byte ranges; the Vortex scan approximates them to row ranges
+      // using the file's exact row count (see VortexIterable).
+      this.splitByteRange = new long[] {newStart, newLength};
       return this;
     }
 
@@ -358,6 +365,7 @@ public class VortexFormatModel<D, S, R>
 
     @Override
     public ReadBuilder<D, S> reuseContainers() {
+      this.reuseContainers = true;
       return this;
     }
 
@@ -419,15 +427,29 @@ public class VortexFormatModel<D, S, R>
           schema.findField(MetadataColumns.ROW_POSITION.fieldId()) != null
               && !constants.containsKey(MetadataColumns.ROW_POSITION.fieldId());
 
+      // Row lineage: when the engine supplies inheritance bases through idToConstant, the scan
+      // materializes _row_id (and reads any stored lineage columns) instead of using the constant
+      // directly; see VortexIterable and the readers' rowIds/longsOrDefault handling.
+      boolean includeRowId =
+          schema.findField(MetadataColumns.ROW_ID.fieldId()) != null
+              && constants.get(MetadataColumns.ROW_ID.fieldId()) instanceof Long;
+      boolean includeLastUpdatedSeq =
+          schema.findField(MetadataColumns.LAST_UPDATED_SEQUENCE_NUMBER.fieldId()) != null
+              && constants.get(MetadataColumns.LAST_UPDATED_SEQUENCE_NUMBER.fieldId())
+                  instanceof Long;
+
       byte[] posDeleteBitmap = posDeletes == null ? null : toRoaringBitmap(posDeletes);
 
       return new VortexIterable<>(
           inputFile,
           projection,
           filterPredicate,
-          rowRange,
+          splitByteRange,
           posDeleteBitmap,
           includeRowPosition,
+          includeRowId,
+          includeLastUpdatedSeq,
+          reuseContainers,
           readerFunc,
           batchReaderFunc,
           caseSensitive,

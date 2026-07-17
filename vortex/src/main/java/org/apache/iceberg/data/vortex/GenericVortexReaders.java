@@ -91,6 +91,30 @@ public class GenericVortexReaders {
     return LongReader.INSTANCE;
   }
 
+  /** Reader for int columns projected as longs (schema evolution int-to-long promotion). */
+  public static VortexValueReader<Long> intsAsLongs() {
+    return IntAsLongReader.INSTANCE;
+  }
+
+  /**
+   * Reader for the {@code _row_id} metadata column, bound to a struct packed by the scan as {@code
+   * {value: <stored _row_id, when the file has one>, pos: row_idx}}. Stored values win; null (or
+   * absent) values inherit {@code firstRowId + position}, per the row lineage spec.
+   */
+  public static VortexValueReader<Long> rowIds(long firstRowId) {
+    return new RowIdReader(firstRowId);
+  }
+
+  /** Reader for long columns that substitutes a constant when the stored value is null. */
+  public static VortexValueReader<Long> longsOrDefault(long defaultValue) {
+    return new LongOrDefaultReader(defaultValue);
+  }
+
+  /** Reader for float columns projected as doubles (schema evolution float-to-double promotion). */
+  public static VortexValueReader<Double> floatsAsDoubles() {
+    return FloatAsDoubleReader.INSTANCE;
+  }
+
   public static VortexValueReader<Float> floats() {
     return FloatReader.INSTANCE;
   }
@@ -312,6 +336,76 @@ public class GenericVortexReaders {
     @Override
     public Double readNonNull(FieldVector vector, int row) {
       return ((Float8Vector) vector).get(row);
+    }
+  }
+
+  private static class IntAsLongReader implements VortexValueReader<Long> {
+    static final IntAsLongReader INSTANCE = new IntAsLongReader();
+
+    private IntAsLongReader() {}
+
+    @Override
+    public Long readNonNull(FieldVector vector, int row) {
+      return ((BaseIntVector) vector).getValueAsLong(row);
+    }
+  }
+
+  private static class RowIdReader implements VortexValueReader<Long> {
+    private final long firstRowId;
+
+    private RowIdReader(long firstRowId) {
+      this.firstRowId = firstRowId;
+    }
+
+    @Override
+    public Long read(FieldVector vector, int row) {
+      // the packed struct itself is never null
+      return readNonNull(vector, row);
+    }
+
+    @Override
+    public Long readNonNull(FieldVector vector, int row) {
+      StructVector struct = (StructVector) vector;
+      FieldVector value = (FieldVector) struct.getChild("value");
+      if (value != null && !value.isNull(row)) {
+        return ((BaseIntVector) value).getValueAsLong(row);
+      }
+
+      FieldVector pos = (FieldVector) struct.getChild("pos");
+      return firstRowId + ((BaseIntVector) pos).getValueAsLong(row);
+    }
+  }
+
+  private static class LongOrDefaultReader implements VortexValueReader<Long> {
+    private final long defaultValue;
+
+    private LongOrDefaultReader(long defaultValue) {
+      this.defaultValue = defaultValue;
+    }
+
+    @Override
+    public Long read(FieldVector vector, int row) {
+      if (vector == null || vector.isNull(row)) {
+        return defaultValue;
+      }
+
+      return readNonNull(vector, row);
+    }
+
+    @Override
+    public Long readNonNull(FieldVector vector, int row) {
+      return ((BaseIntVector) vector).getValueAsLong(row);
+    }
+  }
+
+  private static class FloatAsDoubleReader implements VortexValueReader<Double> {
+    static final FloatAsDoubleReader INSTANCE = new FloatAsDoubleReader();
+
+    private FloatAsDoubleReader() {}
+
+    @Override
+    public Double readNonNull(FieldVector vector, int row) {
+      return (double) ((Float4Vector) vector).get(row);
     }
   }
 

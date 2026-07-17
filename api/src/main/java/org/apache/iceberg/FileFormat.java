@@ -28,32 +28,23 @@ public enum FileFormat {
   ORC("orc", true),
   PARQUET("parquet", true),
   AVRO("avro", true),
-  // TODO(aduffy): Make Vortex splittable once I update FFI to allow providing split sizes.
-  VORTEX("vortex", false, true),
+  // Vortex tasks split on byte ranges like any other splittable format; its reader approximates
+  // the byte range to a row range using the file's exact row count.
+  VORTEX("vortex", true),
   METADATA("metadata.json", false);
 
   private final String ext;
   private final boolean splittable;
-  private final boolean rowSplittable;
 
   private static final FileFormat[] VALUES = values();
 
   FileFormat(String ext, boolean splittable) {
-    this(ext, splittable, false);
-  }
-
-  FileFormat(String ext, boolean splittable, boolean rowSplittable) {
     this.ext = "." + ext;
     this.splittable = splittable;
-    this.rowSplittable = rowSplittable;
   }
 
   public boolean isSplittable() {
     return splittable;
-  }
-
-  public boolean isRowSplittable() {
-    return rowSplittable;
   }
 
   /**
