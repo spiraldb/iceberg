@@ -18,7 +18,6 @@
  */
 package org.apache.iceberg.spark.source;
 
-
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.Parameters;
 import org.apache.iceberg.PlanningMode;
@@ -49,5 +48,4 @@ public class TestSparkVortexReaderDeletes extends TestSparkReaderDeletes {
   protected boolean countDeletes() {
     return false;
   }
-
 }

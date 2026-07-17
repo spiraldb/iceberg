@@ -160,7 +160,6 @@ public abstract class BaseFormatModelTests<T> {
   static final String FEATURE_REUSE_CONTAINERS = "reuseContainers";
   static final String FEATURE_COLUMN_LEVEL_METRICS = "columnLevelMetrics";
   static final String FEATURE_COLUMN_METRICS_TRUNCATE_BINARY = "columnMetricsTruncateBinary";
-  static final String FEATURE_ROW_LINEAGE = "rowLineage";
   static final String FEATURE_EVOLUTION_BY_FIELD_ID = "evolutionByFieldId";
 
   private static final Map<FileFormat, String[]> MISSING_FEATURES =
@@ -524,12 +523,7 @@ public abstract class BaseFormatModelTests<T> {
             .mapToObj(i -> GenericRecord.create(SCHEMA).copy("id", i, "data", "row-" + i))
             .toList();
 
-    if (supportsFeature(fileFormat, FEATURE_SPLIT)) {
-      // Write with a tiny split size so the filter is exercised across multiple row groups.
-      writeRecordsForSplit(fileFormat, schema, genericRecords);
-    } else {
-      writeGenericRecords(fileFormat, schema, genericRecords);
-    }
+    writeRecordsForSplit(fileFormat, schema, genericRecords);
 
     // Filter: id < 0, so no record matches, file-level filtering should eliminate all rows
     Expression lessThanFilter = Expressions.lessThan("id", 0);
@@ -1142,9 +1136,6 @@ public abstract class BaseFormatModelTests<T> {
   @ParameterizedTest
   @FieldSource("FILE_FORMATS")
   void testReadMetadataColumnRowLinage(FileFormat fileFormat) throws IOException {
-
-    assumeSupports(fileFormat, FEATURE_ROW_LINEAGE);
-
     DataGenerator dataGenerator = new DataGenerators.DefaultSchema();
     Schema schema = dataGenerator.schema();
     List<Record> genericRecords = dataGenerator.generateRecords();
@@ -1177,9 +1168,6 @@ public abstract class BaseFormatModelTests<T> {
   @ParameterizedTest
   @FieldSource("FILE_FORMATS")
   void testReadMetadataColumnRowLinageExistValue(FileFormat fileFormat) throws IOException {
-
-    assumeSupports(fileFormat, FEATURE_ROW_LINEAGE);
-
     DataGenerator dataGenerator = new DataGenerators.DefaultSchema();
     Schema dataSchema = dataGenerator.schema();
 
