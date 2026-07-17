@@ -28,8 +28,6 @@ public enum FileFormat {
   ORC("orc", true),
   PARQUET("parquet", true),
   AVRO("avro", true),
-  // Vortex tasks split on byte ranges like any other splittable format; its reader approximates
-  // the byte range to a row range using the file's exact row count.
   VORTEX("vortex", true),
   METADATA("metadata.json", false);
 
