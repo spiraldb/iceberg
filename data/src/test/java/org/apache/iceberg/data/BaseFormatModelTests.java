@@ -130,10 +130,6 @@ public abstract class BaseFormatModelTests<T> {
 
   @TempDir private File tableDir;
 
-  // Vortex reads and writes through the table's FileIO (including the in-memory files this suite
-  // uses), so it joins the TCK whenever its format model is on the classpath. Engines without a
-  // Vortex model (for example Flink) do not have the iceberg-vortex module on their test
-  // classpath, which keeps the format out of their runs.
   private static final FileFormat[] FILE_FORMATS = fileFormats();
 
   private static FileFormat[] fileFormats() {
