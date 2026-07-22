@@ -108,7 +108,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     // begins for this read.
     NativeRuntime.setWorkerThreads(workerThreads);
 
-    Session session = Session.create();
+    Session session = VortexSessions.shared();
     // Read through the table's FileIO instead of Vortex's native storage clients. The returned
     // iterator owns the readable and closes it when the scan is exhausted or abandoned.
     NativeReadable readable = VortexIO.readable(inputFile);
