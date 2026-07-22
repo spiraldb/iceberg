@@ -97,9 +97,9 @@ public class TestGenericVortex extends DataTestBase {
   }
 
   /**
-   * Reads a file large enough for the scan to return multiple Arrow batches, verifying that
-   * readers re-bind their cached buffers and null state on every batch rather than reading through
-   * stale bindings from the first one.
+   * Reads a file large enough for the scan to return multiple Arrow batches, verifying that readers
+   * re-bind their cached buffers and null state on every batch rather than reading through stale
+   * bindings from the first one.
    */
   @Test
   public void testMultipleBatchesRebindReaders() throws IOException {
