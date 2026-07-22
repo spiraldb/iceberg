@@ -73,7 +73,25 @@ import org.apache.iceberg.vortex.VortexSchemas;
 import org.apache.iceberg.vortex.VortexValueReader;
 
 public class GenericVortexReaders {
+  // Largest decimal precision whose unscaled value always fits in a long.
+  private static final int MAX_LONG_PRECISION = 18;
+
   private GenericVortexReaders() {}
+
+  /**
+   * Mirrors the vectorized read path: a decimal with precision of at most 18 digits fits in a
+   * long, so its little-endian decimal128 low 8 bytes are the full value with the upper half being
+   * sign extension. Reading them directly avoids materializing a 16-byte array and a {@link
+   * java.math.BigInteger} per value. Only valid on little-endian hardware.
+   */
+  private static BigDecimal readBigDecimal(DecimalVector vector, int row) {
+    if (vector.getPrecision() <= MAX_LONG_PRECISION) {
+      long unscaled = vector.getDataBuffer().getLong((long) row * DecimalVector.TYPE_WIDTH);
+      return BigDecimal.valueOf(unscaled, vector.getScale());
+    }
+
+    return vector.getObjectNotNull(row);
+  }
 
   public static VortexValueReader<Boolean> bools() {
     return BooleanReader.INSTANCE;
@@ -313,7 +331,7 @@ public class GenericVortexReaders {
 
     @Override
     public BigDecimal readNonNull(FieldVector vector, int row) {
-      return ((DecimalVector) vector).getObjectNotNull(row);
+      return readBigDecimal((DecimalVector) vector, row);
     }
   }
 
@@ -605,7 +623,7 @@ public class GenericVortexReaders {
         physicalType = PhysicalType.DECIMAL16;
       }
 
-      return Variants.of(physicalType, ((DecimalVector) vector).getObjectNotNull(row));
+      return Variants.of(physicalType, readBigDecimal((DecimalVector) vector, row));
     } else if (type instanceof ArrowType.Date dateType) {
       int days =
           switch (dateType.getUnit()) {
