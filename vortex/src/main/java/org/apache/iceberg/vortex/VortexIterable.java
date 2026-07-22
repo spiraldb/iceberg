@@ -199,6 +199,13 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
             false);
 
     ImmutableScanOptions.Builder optionsBuilder = ScanOptions.builder().projection(scanProjection);
+    // Vortex scans resolve partitions concurrently and yield them out of order by default. Row
+    // readers surface records positionally (like every other iceberg file format reader), so the
+    // row path must preserve file order. The batch path stays unordered: Spark derives row
+    // positions from the scan's row_idx values rather than emission order.
+    if (rowReaderFunc != null) {
+      optionsBuilder.ordered(true);
+    }
     scanFilter.ifPresent(optionsBuilder::filter);
     if (rowRange != null) {
       optionsBuilder.rowRangeBegin(rowRange[0]).rowRangeEnd(rowRange[1]);
@@ -427,6 +434,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
         currentBatch = batches.next();
         batchIndex = 0;
         batchLen = currentBatch.getRowCount();
+        rowReader.newBatch(currentBatch);
         if (batchLen > 0) {
           return true;
         }
@@ -442,7 +450,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
       if (!hasNext()) {
         throw new NoSuchElementException();
       }
-      T nextRow = rowReader.read(currentBatch, batchIndex);
+      T nextRow = rowReader.read(batchIndex);
       batchIndex++;
       return nextRow;
     }
