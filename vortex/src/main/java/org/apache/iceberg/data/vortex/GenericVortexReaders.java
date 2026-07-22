@@ -79,9 +79,9 @@ public class GenericVortexReaders {
   private GenericVortexReaders() {}
 
   /**
-   * Mirrors the vectorized read path: a decimal with precision of at most 18 digits fits in a
-   * long, so its little-endian decimal128 low 8 bytes are the full value with the upper half being
-   * sign extension. Reading them directly avoids materializing a 16-byte array and a {@link
+   * Mirrors the vectorized read path: a decimal with precision of at most 18 digits fits in a long,
+   * so its little-endian decimal128 low 8 bytes are the full value with the upper half being sign
+   * extension. Reading them directly avoids materializing a 16-byte array and a {@link
    * java.math.BigInteger} per value. Only valid on little-endian hardware.
    */
   private static BigDecimal readBigDecimal(DecimalVector vector, int row) {
