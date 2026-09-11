@@ -297,15 +297,19 @@ class TestVortexSchemas {
   }
 
   @Test
-  void fixedIsStoredAsVariableWidthBinary() {
-    // Vortex rejects Arrow FixedSizeBinary unless it carries the arrow.uuid extension, so FIXED is
-    // written as plain binary and its length is re-imposed from the Iceberg schema on read.
+  void fixedIsRefusedWithANamedError() {
+    // Vortex rejects Arrow FixedSizeBinary unless it carries the arrow.uuid extension, and the
+    // rejection surfaces as an opaque native error when the writer is created. Refusing the schema
+    // up front names the column and the reason instead.
     Schema icebergSchema = new Schema(required(1, "f", Types.FixedType.ofLength(7)));
 
-    assertThat(VortexSchemas.toArrowSchema(icebergSchema).findField("f").getType())
-        .isEqualTo(ArrowType.Binary.INSTANCE);
-    assertThat(VortexSchemas.toVortexArrowSchema(icebergSchema).findField("f").getType())
-        .isEqualTo(new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary());
+    assertThatThrownBy(() -> VortexSchemas.toArrowSchema(icebergSchema))
+        .isInstanceOf(UnsupportedOperationException.class)
+        .hasMessageContaining("FIXED column f")
+        .hasMessageContaining("no fixed-width binary type");
+    assertThatThrownBy(() -> VortexSchemas.toVortexArrowSchema(icebergSchema))
+        .isInstanceOf(UnsupportedOperationException.class)
+        .hasMessageContaining("FIXED column f");
   }
 
   private static Field listField(String name, ArrowType listType, ArrowType elementType) {

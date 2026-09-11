@@ -25,6 +25,7 @@ import org.apache.arrow.vector.BaseIntVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.complex.StructVector;
+import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
@@ -32,6 +33,7 @@ import org.apache.iceberg.spark.SparkUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.vortex.VortexArrowProperties;
 import org.apache.iceberg.vortex.VortexBatchReader;
+import org.apache.iceberg.vortex.VortexSchemas;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.sql.vectorized.ColumnVector;
@@ -55,22 +57,27 @@ public class VectorizedSparkVortexReaders {
       Schema icebergSchema,
       org.apache.arrow.vector.types.pojo.Schema vortexSchema,
       Map<Integer, ?> idToConstant) {
-    return new ConstantAwareBatchReader(icebergSchema, idToConstant);
+    return new ConstantAwareBatchReader(icebergSchema, vortexSchema, idToConstant);
   }
 
   static final class ConstantAwareBatchReader implements VortexBatchReader<ColumnarBatch> {
     private final List<Types.NestedField> columns;
+    private final VortexSchemas.FieldBinding binding;
     private final Map<Integer, ?> idToConstant;
 
-    // Resolves expected column position -> Arrow batch column index, computed by name from the
-    // first batch. -1 marks a constant column not backed by a batch column. Vortex returns only the
+    // Resolves expected column position -> Arrow batch column index, computed from the first
+    // batch. -1 marks a constant column not backed by a batch column. Vortex returns only the
     // projected (non-constant, file-resident) columns, so the batch is not positionally aligned
     // with
     // the reader schema.
     private int[] batchColumnIndex;
 
-    ConstantAwareBatchReader(Schema readerSchema, Map<Integer, ?> idToConstant) {
+    ConstantAwareBatchReader(
+        Schema readerSchema,
+        org.apache.arrow.vector.types.pojo.Schema fileArrowSchema,
+        Map<Integer, ?> idToConstant) {
       this.columns = readerSchema.columns();
+      this.binding = VortexSchemas.FieldBinding.of(fileArrowSchema.getFields());
       this.idToConstant = idToConstant == null ? Collections.emptyMap() : idToConstant;
     }
 
@@ -139,7 +146,10 @@ public class VectorizedSparkVortexReaders {
         } else if (idToConstant.containsKey(field.fieldId())) {
           indexes[i] = -1;
         } else {
-          Integer index = nameToIndex.get(field.name());
+          // The scan projects each column under its name in the file, which differs from the
+          // expected field's name when the column was renamed after the file was written.
+          Field fileField = binding.resolve(field);
+          Integer index = fileField == null ? null : nameToIndex.get(fileField.getName());
           indexes[i] = index == null ? -1 : index;
         }
       }

@@ -107,15 +107,6 @@ public class SparkVortexValueReaders {
     return new MapReader(keyReader, valueReader);
   }
 
-  /**
-   * Reads an Iceberg FIXED column. Vortex stores FIXED as variable-width binary (it rejects Arrow
-   * FixedSizeBinary outside the {@code arrow.uuid} extension), so the reader accepts either
-   * encoding and yields the {@code byte[]} Spark uses for binary.
-   */
-  static VortexValueReader<byte[]> fixed(ArrowType arrowType, int length) {
-    return new FixedReader(bytes(arrowType), length);
-  }
-
   private static class MapReader extends BoundVortexReader<MapData> {
     private final VortexValueReader<?> keyReader;
     private final VortexValueReader<?> valueReader;
@@ -152,29 +143,6 @@ public class SparkVortexValueReaders {
       }
 
       return new ArrayBasedMapData(new GenericArrayData(keys), new GenericArrayData(values));
-    }
-  }
-
-  private static class FixedReader extends BoundVortexReader<byte[]> {
-    private final VortexValueReader<byte[]> delegate;
-    private final int length;
-
-    private FixedReader(VortexValueReader<byte[]> delegate, int length) {
-      this.delegate = delegate;
-      this.length = length;
-    }
-
-    @Override
-    protected void bindVector(FieldVector vector) {
-      delegate.bind(vector);
-    }
-
-    @Override
-    public byte[] readNonNull(int row) {
-      byte[] value = delegate.readNonNull(row);
-      Preconditions.checkState(
-          value.length == length, "Invalid fixed[%s] value: read %s bytes", length, value.length);
-      return value;
     }
   }
 

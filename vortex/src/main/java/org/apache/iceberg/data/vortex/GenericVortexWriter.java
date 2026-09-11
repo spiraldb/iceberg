@@ -159,21 +159,10 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
         ((VarBinaryVector) vector).setSafe(rowIndex, binaryBytes);
         break;
       case FIXED:
-        // Vortex has no fixed-width binary type, so FIXED is stored as variable-width binary and
-        // the declared length is enforced here (see VortexSchemas#toArrowField).
-        byte[] fixedBytes =
-            value instanceof ByteBuffer fixedBuffer
-                ? ByteBuffers.toByteArray(fixedBuffer)
-                : (byte[]) value;
-        int expectedLength = ((Types.FixedType) type).length();
-        Preconditions.checkArgument(
-            fixedBytes.length == expectedLength,
-            "Invalid value for %s: expected %s bytes, got %s",
-            type,
-            expectedLength,
-            fixedBytes.length);
-        ((VarBinaryVector) vector).setSafe(rowIndex, fixedBytes);
-        break;
+        // Unreachable in practice: VortexSchemas refuses FIXED while building the file schema,
+        // because Vortex has no fixed-width binary type. Kept so the switch stays total.
+        throw new UnsupportedOperationException(
+            "Cannot write Iceberg FIXED column: Vortex has no fixed-width binary type");
       case DECIMAL:
         ((DecimalVector) vector).setSafe(rowIndex, (BigDecimal) value);
         break;

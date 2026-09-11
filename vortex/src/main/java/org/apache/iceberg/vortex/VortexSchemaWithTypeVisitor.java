@@ -19,9 +19,6 @@
 package org.apache.iceberg.vortex;
 
 import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.iceberg.Schema;
@@ -104,19 +101,19 @@ public abstract class VortexSchemaWithTypeVisitor<T> {
       return visitor.struct(null, fields, results);
     }
 
-    // Arrow/Vortex schemas carry no Iceberg field ids, so expected struct fields are bound to file
-    // columns by name (the top-level reader resolves columns the same way). Driving the walk from
-    // the expected fields lets a projection reorder, drop, or add struct fields relative to the
+    // Expected struct fields are bound to file columns by Iceberg id when the file carries them
+    // (VortexIterable tags the Arrow schema from the file's stored Iceberg schema) and by name
+    // otherwise; the top-level reader resolves columns the same way. Driving the walk from the
+    // expected fields lets a projection reorder, drop, or add struct fields relative to the
     // physical file layout. The returned fields/children are aligned to the expected fields, with a
     // null entry wherever the file does not contain the expected field.
-    Map<String, Field> fileFieldsByName =
-        fields.stream().collect(Collectors.toUnmodifiableMap(Field::getName, Function.identity()));
+    VortexSchemas.FieldBinding binding = VortexSchemas.FieldBinding.of(fields);
 
     List<Types.NestedField> expectedFields = struct.fields();
     List<Field> matchedFields = Lists.newArrayListWithExpectedSize(expectedFields.size());
     List<T> results = Lists.newArrayListWithExpectedSize(expectedFields.size());
     for (Types.NestedField expectedField : expectedFields) {
-      Field fileField = fileFieldsByName.get(expectedField.name());
+      Field fileField = binding.resolve(expectedField);
       matchedFields.add(fileField);
       results.add(fileField == null ? null : visit(expectedField.type(), fileField, visitor));
     }

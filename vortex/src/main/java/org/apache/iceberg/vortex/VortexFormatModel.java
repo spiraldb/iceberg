@@ -27,6 +27,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +39,7 @@ import org.apache.iceberg.FileContent;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.MetricsConfig;
+import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.data.vortex.PositionDeleteVortexWriter;
 import org.apache.iceberg.deletes.PositionDelete;
@@ -273,8 +275,15 @@ public class VortexFormatModel<D, S, R>
       NativeWritable outputStream = VortexIO.writable(outputFile.encryptingOutputFile());
       VortexWriter vortexWriter;
       try {
+        // Persist the Iceberg schema in the file's metadata. Vortex drops Arrow field metadata, so
+        // this is the only channel that carries Iceberg field ids, and readers need them to rebind
+        // columns renamed since the file was written.
         vortexWriter =
-            VortexWriter.builder(session, outputStream, vortexSchema, vortexAllocator).build();
+            VortexWriter.builder(session, outputStream, vortexSchema, vortexAllocator)
+                .putMetadata(
+                    VortexSchemas.ICEBERG_SCHEMA_KEY,
+                    SchemaParser.toJson(writeSchema).getBytes(StandardCharsets.UTF_8))
+                .build();
       } catch (IOException | RuntimeException e) {
         try {
           outputStream.close();
@@ -422,13 +431,12 @@ public class VortexFormatModel<D, S, R>
       // _pos is excluded here too, but when it is requested it is materialized separately from
       // Vortex's `row_idx` scan expression (see VortexIterable) rather than read from the file.
       Map<Integer, ?> constants = idToConstant == null ? Collections.emptyMap() : idToConstant;
-      List<String> projection =
+      List<Types.NestedField> projection =
           schema.columns().stream()
               .filter(
                   field ->
                       !constants.containsKey(field.fieldId())
                           && !MetadataColumns.isMetadataColumn(field.name()))
-              .map(Types.NestedField::name)
               .toList();
 
       boolean includeRowPosition =

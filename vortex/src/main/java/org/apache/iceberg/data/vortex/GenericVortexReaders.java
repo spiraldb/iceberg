@@ -219,15 +219,6 @@ public class GenericVortexReaders {
   }
 
   /**
-   * Reads an Iceberg FIXED column. Vortex stores FIXED as variable-width binary (it rejects Arrow
-   * FixedSizeBinary outside the {@code arrow.uuid} extension), so the reader accepts either
-   * encoding and always yields the {@code byte[]} Iceberg generics use for FIXED.
-   */
-  public static VortexValueReader<byte[]> fixed(int length) {
-    return new FixedReader(length);
-  }
-
-  /**
    * Returns a reader that always produces {@code constant}, ignoring the bound vector and row.
    *
    * <p>Used to inject identity-partition values and metadata columns (for example {@code _file} or
@@ -354,31 +345,6 @@ public class GenericVortexReaders {
         entries.put(keyReader.read(i), valueReader.read(i));
       }
       return entries;
-    }
-  }
-
-  private static class FixedReader extends BoundVortexReader<byte[]> {
-    private final int length;
-    private FieldVector vector;
-
-    private FixedReader(int length) {
-      this.length = length;
-    }
-
-    @Override
-    protected void bindVector(FieldVector fieldVector) {
-      this.vector = fieldVector;
-    }
-
-    @Override
-    public byte[] readNonNull(int row) {
-      byte[] bytes =
-          vector instanceof FixedSizeBinaryVector fixedVector
-              ? fixedVector.get(row)
-              : binaryBytes(vector, row);
-      Preconditions.checkState(
-          bytes.length == length, "Invalid fixed[%s] value: read %s bytes", length, bytes.length);
-      return bytes;
     }
   }
 

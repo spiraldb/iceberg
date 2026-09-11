@@ -35,6 +35,7 @@ import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 
@@ -53,6 +54,20 @@ public final class VortexSchemas {
   public static final String MAP_ENTRIES_NAME = "entries";
   public static final String MAP_KEY_NAME = "key";
   public static final String MAP_VALUE_NAME = "value";
+
+  /**
+   * Vortex file-metadata key holding the JSON Iceberg schema the file was written with. Vortex
+   * drops Arrow field and schema metadata, so this file-level channel (added in 0.86) is the only
+   * way to persist Iceberg field ids.
+   */
+  public static final String ICEBERG_SCHEMA_KEY = "iceberg.schema";
+
+  /**
+   * Arrow field-metadata key carrying a field's Iceberg id. Only ever set in memory, by {@link
+   * #withFieldIds}, from the schema stored under {@link #ICEBERG_SCHEMA_KEY}; it is never written
+   * to a file.
+   */
+  public static final String FIELD_ID_KEY = "PARQUET:field_id";
 
   private VortexSchemas() {}
 
@@ -165,12 +180,7 @@ public final class VortexSchemas {
       case STRING -> new Field(name, new FieldType(nullable, ArrowType.Utf8.INSTANCE, null), null);
       case BINARY ->
           new Field(name, new FieldType(nullable, ArrowType.Binary.INSTANCE, null), null);
-      case FIXED ->
-          // Vortex has no fixed-width binary type: it rejects any Arrow FixedSizeBinary field that
-          // is not tagged as the arrow.uuid extension. FIXED is therefore stored as variable-width
-          // binary, and the declared length is re-imposed by the writer and reader from the Iceberg
-          // schema. A file read without an Iceberg schema surfaces these columns as BINARY.
-          new Field(name, new FieldType(nullable, ArrowType.Binary.INSTANCE, null), null);
+      case FIXED -> throw unsupportedFixed(name);
       case DECIMAL -> {
         Types.DecimalType decimalType = (Types.DecimalType) type;
         yield new Field(
@@ -424,13 +434,7 @@ public final class VortexSchemas {
               name,
               new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary(),
               nullable);
-      case FIXED ->
-          // See toArrowField: Vortex rejects FixedSizeBinary outside the arrow.uuid extension, so
-          // FIXED is stored as variable-width binary and its length is enforced on write.
-          toVortexArrowField(
-              name,
-              new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary(),
-              nullable);
+      case FIXED -> throw unsupportedFixed(name);
       case DECIMAL -> {
         Types.DecimalType decimalType = (Types.DecimalType) type;
         yield toVortexArrowField(
@@ -875,6 +879,20 @@ public final class VortexSchemas {
         : Types.ListType.ofRequired(elementId, innerType);
   }
 
+  /**
+   * Vortex has no fixed-width binary type: it rejects every Arrow FixedSizeBinary field that is not
+   * tagged as the {@code arrow.uuid} extension (verified against 0.86.1), and the rejection
+   * surfaces as an opaque native failure when the writer is created. Iceberg FIXED columns are
+   * therefore refused here, while the file is still being described, so callers get a message
+   * naming the column and the reason.
+   */
+  private static UnsupportedOperationException unsupportedFixed(String name) {
+    return new UnsupportedOperationException(
+        "Cannot write Iceberg FIXED column "
+            + name
+            + ": Vortex has no fixed-width binary type. Use BINARY instead.");
+  }
+
   private static Type toIcebergMap(Field field, AtomicInteger nextId) {
     Field entries = field.getChildren().get(0);
     Field keyField = entries.getChildren().get(0);
@@ -903,6 +921,151 @@ public final class VortexSchemas {
     return valueField.isNullable()
         ? Types.MapType.ofOptional(keyId, valueId, keyType, valueType)
         : Types.MapType.ofRequired(keyId, valueId, keyType, valueType);
+  }
+
+  /**
+   * Returns a copy of {@code arrowSchema} with every field annotated with the Iceberg id it carries
+   * in {@code icebergSchema}, so readers can bind columns by id instead of by name.
+   *
+   * <p>Both schemas describe the same file, so they are walked in parallel: struct children match
+   * by name, and list elements and map keys/values match positionally. A subtree whose names do not
+   * line up is left unannotated and falls back to name-based binding.
+   */
+  public static org.apache.arrow.vector.types.pojo.Schema withFieldIds(
+      org.apache.arrow.vector.types.pojo.Schema arrowSchema, Schema icebergSchema) {
+    return new org.apache.arrow.vector.types.pojo.Schema(
+        withFieldIds(arrowSchema.getFields(), icebergSchema.asStruct()),
+        arrowSchema.getCustomMetadata());
+  }
+
+  private static List<Field> withFieldIds(List<Field> arrowFields, Types.StructType struct) {
+    ImmutableList.Builder<Field> annotated = ImmutableList.builder();
+    for (Field arrowField : arrowFields) {
+      Types.NestedField icebergField = struct.field(arrowField.getName());
+      annotated.add(
+          icebergField == null
+              ? arrowField
+              : withFieldId(arrowField, icebergField.fieldId(), icebergField.type()));
+    }
+
+    return annotated.build();
+  }
+
+  private static Field withFieldId(Field arrowField, int fieldId, Type icebergType) {
+    Map<String, String> metadata =
+        ImmutableMap.<String, String>builder()
+            .putAll(arrowField.getMetadata())
+            .put(FIELD_ID_KEY, String.valueOf(fieldId))
+            .buildKeepingLast();
+
+    return new Field(
+        arrowField.getName(),
+        new FieldType(
+            arrowField.isNullable(), arrowField.getType(), arrowField.getDictionary(), metadata),
+        annotatedChildren(arrowField, icebergType));
+  }
+
+  // Variant storage is an Iceberg-level encoding rather than nested Iceberg fields, so its Arrow
+  // children carry no ids and are left alone.
+  private static List<Field> annotatedChildren(Field arrowField, Type icebergType) {
+    List<Field> children = arrowField.getChildren();
+    if (children.isEmpty() || !icebergType.isNestedType()) {
+      return children;
+    }
+
+    if (icebergType.isStructType()) {
+      return withFieldIds(children, icebergType.asStructType());
+    }
+
+    if (icebergType.isListType()) {
+      Types.ListType list = icebergType.asListType();
+      return ImmutableList.of(withFieldId(children.get(0), list.elementId(), list.elementType()));
+    }
+
+    Types.MapType map = icebergType.asMapType();
+    List<Field> entries = children.get(0).getChildren();
+    if (entries.size() != 2) {
+      return children;
+    }
+
+    Field annotatedEntries =
+        new Field(
+            children.get(0).getName(),
+            children.get(0).getFieldType(),
+            ImmutableList.of(
+                withFieldId(entries.get(0), map.keyId(), map.keyType()),
+                withFieldId(entries.get(1), map.valueId(), map.valueType())));
+    return ImmutableList.of(annotatedEntries);
+  }
+
+  /** Returns the Iceberg id {@link #withFieldIds} attached to {@code field}, or null. */
+  public static Integer fieldId(Field field) {
+    String id = field.getMetadata().get(FIELD_ID_KEY);
+    if (id == null) {
+      return null;
+    }
+
+    try {
+      return Integer.valueOf(id);
+    } catch (NumberFormatException e) {
+      return null;
+    }
+  }
+
+  /**
+   * Binds expected Iceberg fields to a file's Arrow fields.
+   *
+   * <p>When the file's fields carry Iceberg ids, binding is by id alone, so a column renamed since
+   * the file was written still resolves and a newly added column that reuses an old name does not.
+   * Files written before the Iceberg schema was persisted carry no ids, so binding falls back to
+   * matching by name, which is what those files have always used.
+   */
+  public static final class FieldBinding {
+    private final Map<Integer, Field> byId;
+    private final Map<String, Field> byName;
+
+    private FieldBinding(Map<Integer, Field> byId, Map<String, Field> byName) {
+      this.byId = byId;
+      this.byName = byName;
+    }
+
+    public static FieldBinding of(List<Field> fileFields) {
+      Map<Integer, Field> byId = Maps.newHashMapWithExpectedSize(fileFields.size());
+      Map<String, Field> byName = Maps.newHashMapWithExpectedSize(fileFields.size());
+      for (Field field : fileFields) {
+        byName.put(field.getName(), field);
+        Integer id = fieldId(field);
+        if (id != null) {
+          byId.put(id, field);
+        }
+      }
+
+      return new FieldBinding(byId, byName);
+    }
+
+    /** Returns the file field backing {@code expected}, or null when the file has no such field. */
+    public Field resolve(Types.NestedField expected) {
+      if (byId.isEmpty()) {
+        return byName.get(expected.name());
+      }
+
+      Field matched = byId.get(expected.fieldId());
+      if (matched != null) {
+        return matched;
+      }
+
+      // Fields the file's Iceberg schema does not describe carry no id, so they can only be matched
+      // by name: the synthetic _pos column the scan materializes, and any subtree withFieldIds
+      // could not annotate. An id-carrying field is never matched by name, so a column added under
+      // a name that used to belong to another column reads as missing rather than as that column.
+      Field named = byName.get(expected.name());
+      return named != null && fieldId(named) == null ? named : null;
+    }
+
+    /** Returns the file field with {@code name}, ignoring ids. For metadata columns. */
+    public Field resolveByName(String name) {
+      return byName.get(name);
+    }
   }
 
   /**

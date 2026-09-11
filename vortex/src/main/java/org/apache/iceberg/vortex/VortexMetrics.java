@@ -254,15 +254,13 @@ final class VortexMetrics {
   }
 
   @SuppressWarnings("unchecked")
-  // FIXED bounds are never truncated: a shortened value is not a valid fixed[N] and readers would
-  // mis-decode it. This matches how Parquet metrics are collected.
   private static <T> T truncateLowerBound(Type type, T value, int length) {
     if (value == null) {
       return null;
     }
     return switch (type.typeId()) {
       case STRING -> (T) UnicodeUtil.truncateStringMin((String) value, length);
-      case BINARY -> (T) BinaryUtil.truncateBinaryMin((ByteBuffer) value, length);
+      case BINARY, FIXED -> (T) BinaryUtil.truncateBinaryMin((ByteBuffer) value, length);
       default -> value;
     };
   }
@@ -274,7 +272,7 @@ final class VortexMetrics {
     }
     return switch (type.typeId()) {
       case STRING -> (T) UnicodeUtil.truncateStringMax((String) value, length);
-      case BINARY -> (T) BinaryUtil.truncateBinaryMax((ByteBuffer) value, length);
+      case BINARY, FIXED -> (T) BinaryUtil.truncateBinaryMax((ByteBuffer) value, length);
       default -> value;
     };
   }

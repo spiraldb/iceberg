@@ -116,19 +116,6 @@ public class SparkVortexWriter implements VortexValueWriter<InternalRow> {
         byte[] bytes = row.getBinary(fieldIndex);
         ((VarBinaryVector) vector).setSafe(rowIndex, bytes);
         break;
-      case FIXED:
-        // Spark models FIXED as binary, and Vortex stores it as variable-width binary because it
-        // rejects Arrow FixedSizeBinary outside the arrow.uuid extension (see VortexSchemas).
-        byte[] fixedBytes = row.getBinary(fieldIndex);
-        int expectedLength = ((Types.FixedType) type).length();
-        Preconditions.checkArgument(
-            fixedBytes.length == expectedLength,
-            "Invalid value for %s: expected %s bytes, got %s",
-            type,
-            expectedLength,
-            fixedBytes.length);
-        ((VarBinaryVector) vector).setSafe(rowIndex, fixedBytes);
-        break;
       case DECIMAL:
         Types.DecimalType decimalType = (Types.DecimalType) type;
         BigDecimal decimal =

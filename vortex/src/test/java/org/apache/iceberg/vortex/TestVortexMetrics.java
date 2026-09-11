@@ -408,40 +408,6 @@ public class TestVortexMetrics {
   }
 
   @Test
-  void summaryMetricsKeepFullFixedBounds() throws Exception {
-    // fixed[20] is longer than the default 16-byte truncation length. A truncated bound would not
-    // be a valid fixed[20] value, so bounds must be stored whole.
-    Schema schema = new Schema(required(1, "f", Types.FixedType.ofLength(20)));
-    byte[] lower = new byte[20];
-    byte[] upper = new byte[20];
-    java.util.Arrays.fill(upper, (byte) 0x7f);
-
-    Record first = GenericRecord.create(schema);
-    first.setField("f", lower);
-    Record second = GenericRecord.create(schema);
-    second.setField("f", upper);
-
-    FileAppender<Record> appender = buildAppender(schema, "fixed.vortex");
-    appender.add(first);
-    appender.add(second);
-    appender.close();
-
-    Metrics metrics = appender.metrics();
-    assertThat(metrics.recordCount()).isEqualTo(2L);
-    assertThat(metrics.valueCounts()).containsEntry(1, 2L);
-    assertThat(metrics.lowerBounds().get(1).remaining()).isEqualTo(20);
-    assertThat(metrics.upperBounds().get(1).remaining()).isEqualTo(20);
-    assertThat(
-            Conversions.<ByteBuffer>fromByteBuffer(
-                schema.findType("f"), metrics.lowerBounds().get(1)))
-        .isEqualTo(ByteBuffer.wrap(lower));
-    assertThat(
-            Conversions.<ByteBuffer>fromByteBuffer(
-                schema.findType("f"), metrics.upperBounds().get(1)))
-        .isEqualTo(ByteBuffer.wrap(upper));
-  }
-
-  @Test
   void summaryMetricsForMapReportCountsWithoutBounds() throws Exception {
     // Vortex only computes statistics for top-level columns, so a map column carries no bounds.
     Schema schema =
