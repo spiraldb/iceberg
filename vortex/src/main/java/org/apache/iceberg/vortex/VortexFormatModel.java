@@ -273,7 +273,8 @@ public class VortexFormatModel<D, S, R>
       NativeWritable outputStream = VortexIO.writable(outputFile.encryptingOutputFile());
       VortexWriter vortexWriter;
       try {
-        vortexWriter = VortexWriter.create(session, outputStream, vortexSchema, vortexAllocator);
+        vortexWriter =
+            VortexWriter.builder(session, outputStream, vortexSchema, vortexAllocator).build();
       } catch (IOException | RuntimeException e) {
         try {
           outputStream.close();

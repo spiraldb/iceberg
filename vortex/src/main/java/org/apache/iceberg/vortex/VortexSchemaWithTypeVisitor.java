@@ -38,6 +38,8 @@ public abstract class VortexSchemaWithTypeVisitor<T> {
 
   public abstract T list(Types.ListType iList, Field listField, T element);
 
+  public abstract T map(Types.MapType iMap, Field mapField, T key, T value);
+
   public abstract T primitive(Type.PrimitiveType iPrimitive, Field primField);
 
   public abstract T variant(Types.VariantType variantType, Field variantField);
@@ -60,13 +62,30 @@ public abstract class VortexSchemaWithTypeVisitor<T> {
     } else if (arrowType instanceof ArrowType.List
         || arrowType instanceof ArrowType.LargeList
         || arrowType instanceof ArrowType.FixedSizeList) {
-      Types.ListType list = iType != null ? iType.asListType() : null;
-      Field element = field.getChildren().get(0);
-      return visitor.list(
-          list, field, visit(list != null ? list.elementType() : null, element, visitor));
+      return visitList(iType != null ? iType.asListType() : null, field, visitor);
+    } else if (arrowType instanceof ArrowType.Map) {
+      return visitMap(iType != null ? iType.asMapType() : null, field, visitor);
     } else {
       return visitor.primitive(iType != null ? iType.asPrimitiveType() : null, field);
     }
+  }
+
+  private static <T> T visitList(
+      Types.ListType list, Field listField, VortexSchemaWithTypeVisitor<T> visitor) {
+    Field element = listField.getChildren().get(0);
+    return visitor.list(
+        list, listField, visit(list != null ? list.elementType() : null, element, visitor));
+  }
+
+  /** Arrow maps nest their key and value under a single non-nullable {@code entries} struct. */
+  private static <T> T visitMap(
+      Types.MapType map, Field mapField, VortexSchemaWithTypeVisitor<T> visitor) {
+    List<Field> entries = mapField.getChildren().get(0).getChildren();
+    return visitor.map(
+        map,
+        mapField,
+        visit(map != null ? map.keyType() : null, entries.get(0), visitor),
+        visit(map != null ? map.valueType() : null, entries.get(1), visitor));
   }
 
   private static boolean isVariant(Type iType, Field field) {

@@ -19,7 +19,6 @@
 package org.apache.iceberg.vortex;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assumptions.assumeThat;
 
 import java.io.IOException;
 import java.util.List;
@@ -37,8 +36,6 @@ import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
-import org.apache.iceberg.types.Type;
-import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.StructType;
 import org.junit.jupiter.api.Test;
@@ -155,9 +152,6 @@ public class TestGenericVortex extends DataTestBase {
 
   private void writeAndValidate(Schema writeSchema, Schema expectedSchema, List<Record> expected)
       throws IOException {
-    assumeSupported(writeSchema);
-    assumeSupported(expectedSchema);
-
     // Needed because the current writer doesn't really support OutputFile
     OutputFile outputFile =
         Files.localOutput(temp.resolve("test-" + System.nanoTime() + ".vortex").toFile());
@@ -193,15 +187,6 @@ public class TestGenericVortex extends DataTestBase {
         index += 1;
       }
     }
-  }
-
-  private static void assumeSupported(Schema schema) {
-    assumeThat(
-            TypeUtil.find(
-                schema,
-                type -> type.typeId() == Type.TypeID.MAP || type.typeId() == Type.TypeID.FIXED))
-        .as("Vortex does not yet support maps or fixed")
-        .isNull();
   }
 
   private static VortexFormatModel<Record, StructType, VortexRowReader<?>> formatModel() {

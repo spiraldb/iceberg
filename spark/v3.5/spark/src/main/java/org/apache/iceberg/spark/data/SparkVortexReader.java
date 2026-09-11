@@ -206,6 +206,12 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
     }
 
     @Override
+    public VortexValueReader<?> map(
+        Types.MapType iMap, Field mapField, VortexValueReader<?> key, VortexValueReader<?> value) {
+      return SparkVortexValueReaders.map(key, value);
+    }
+
+    @Override
     public VortexValueReader<?> variant(Types.VariantType variantType, Field variantField) {
       // Spark 3.5 has no VariantType/VariantVal, so variant columns cannot be read here.
       throw new UnsupportedOperationException("Variant is not supported for Spark 3.5");
@@ -221,6 +227,10 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
         case DOUBLE -> doubleReader(primField.getType());
         case STRING -> SparkVortexValueReaders.utf8String(primField.getType());
         case BINARY -> SparkVortexValueReaders.bytes(primField.getType());
+          // FIXED is stored as variable-width binary; only the expected Iceberg type identifies it.
+        case FIXED ->
+            SparkVortexValueReaders.fixed(
+                primField.getType(), ((Types.FixedType) icebergType).length());
         case DECIMAL -> SparkVortexValueReaders.decimals();
         case TIMESTAMP, TIMESTAMP_NANO -> {
           ArrowType.Timestamp ts = (ArrowType.Timestamp) primField.getType();

@@ -241,11 +241,18 @@ public class GenericVortexReader implements VortexRowReader<Record> {
     }
 
     @Override
+    public VortexValueReader<?> map(
+        Types.MapType iMap, Field mapField, VortexValueReader<?> key, VortexValueReader<?> value) {
+      return GenericVortexReaders.map(key, value);
+    }
+
+    @Override
     public VortexValueReader<?> primitive(Type.PrimitiveType iPrimitive, Field primField) {
-      if ((iPrimitive != null && iPrimitive.typeId() == Type.TypeID.UUID)
-          || VortexSchemas.isUuidField(primField)) {
-        return GenericVortexReaders.uuids();
+      VortexValueReader<?> byteWidthReader = byteWidthReader(iPrimitive, primField);
+      if (byteWidthReader != null) {
+        return byteWidthReader;
       }
+
       ArrowType arrowType = primField.getType();
       if (arrowType instanceof ArrowType.Int intType) {
         if (intType.getBitWidth() > Integer.SIZE) {
@@ -270,6 +277,27 @@ public class GenericVortexReader implements VortexRowReader<Record> {
     @Override
     public VortexValueReader<?> variant(Types.VariantType variantType, Field variantField) {
       return GenericVortexReaders.variants();
+    }
+
+    /**
+     * Returns a reader for the two Iceberg types whose Arrow encoding does not identify them on its
+     * own, or null when the field is not one of them. UUID is stored as FixedSizeBinary(16) tagged
+     * with the {@code arrow.uuid} extension, which Vortex may or may not surface as an extension
+     * vector; FIXED is stored as plain binary because Vortex rejects untagged FixedSizeBinary, so
+     * only the expected Iceberg type tells it apart from BINARY.
+     */
+    private static VortexValueReader<?> byteWidthReader(
+        Type.PrimitiveType iPrimitive, Field primField) {
+      if ((iPrimitive != null && iPrimitive.typeId() == Type.TypeID.UUID)
+          || VortexSchemas.isUuidField(primField)) {
+        return GenericVortexReaders.uuids();
+      }
+
+      if (iPrimitive instanceof Types.FixedType fixedType) {
+        return GenericVortexReaders.fixed(fixedType.length());
+      }
+
+      return null;
     }
 
     private static VortexValueReader<?> simpleReader(ArrowType arrowType) {

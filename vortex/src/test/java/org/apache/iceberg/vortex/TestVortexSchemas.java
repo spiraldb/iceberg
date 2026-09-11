@@ -63,6 +63,14 @@ class TestVortexSchemas {
                       "inner",
                       Types.StructType.of(required(9, "x", Types.IntegerType.get()))))));
 
+  private static final Schema MAP_SCHEMA =
+      new Schema(
+          required(1, "id", Types.LongType.get()),
+          optional(
+              2,
+              "props",
+              Types.MapType.ofOptional(3, 4, Types.StringType.get(), Types.IntegerType.get())));
+
   @Test
   void convertLocalArrowStructTypes() {
     assertStructRoundTrip(VortexSchemas.convert(VortexSchemas.toArrowSchema(SCHEMA)));
@@ -213,6 +221,91 @@ class TestVortexSchemas {
                     new org.apache.arrow.vector.types.pojo.Schema(List.of(variant))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("typed_value child must be nullable");
+  }
+
+  @Test
+  void mapToArrowUsesCanonicalEntriesLayout() {
+    Field map = VortexSchemas.toArrowSchema(MAP_SCHEMA).findField("props");
+
+    assertThat(map.isNullable()).isTrue();
+    assertThat(map.getType()).isEqualTo(new ArrowType.Map(false));
+    assertThat(map.getChildren()).hasSize(1);
+
+    Field entries = map.getChildren().get(0);
+    assertThat(entries.getName()).isEqualTo(VortexSchemas.MAP_ENTRIES_NAME);
+    assertThat(entries.isNullable()).isFalse();
+    assertThat(entries.getType()).isEqualTo(ArrowType.Struct.INSTANCE);
+
+    Field key = entries.getChildren().get(0);
+    assertThat(key.getName()).isEqualTo(VortexSchemas.MAP_KEY_NAME);
+    assertThat(key.isNullable()).isFalse();
+    assertThat(key.getType()).isEqualTo(ArrowType.Utf8.INSTANCE);
+
+    Field value = entries.getChildren().get(1);
+    assertThat(value.getName()).isEqualTo(VortexSchemas.MAP_VALUE_NAME);
+    assertThat(value.isNullable()).isTrue();
+    assertThat(value.getType()).isEqualTo(new ArrowType.Int(Integer.SIZE, true));
+  }
+
+  @Test
+  void mapToVortexArrowUsesCanonicalEntriesLayout() {
+    dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field map =
+        VortexSchemas.toVortexArrowSchema(MAP_SCHEMA).findField("props");
+
+    assertThat(map.getType())
+        .isEqualTo(
+            new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Map(false));
+
+    dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field entries =
+        map.getChildren().get(0);
+    assertThat(entries.getName()).isEqualTo(VortexSchemas.MAP_ENTRIES_NAME);
+    assertThat(entries.isNullable()).isFalse();
+    assertThat(entries.getChildren().get(0).getName()).isEqualTo(VortexSchemas.MAP_KEY_NAME);
+    assertThat(entries.getChildren().get(0).isNullable()).isFalse();
+    assertThat(entries.getChildren().get(1).getName()).isEqualTo(VortexSchemas.MAP_VALUE_NAME);
+    assertThat(entries.getChildren().get(1).isNullable()).isTrue();
+  }
+
+  @Test
+  void convertMapBackToIceberg() {
+    for (Schema roundTrip :
+        List.of(
+            VortexSchemas.convert(VortexSchemas.toArrowSchema(MAP_SCHEMA)),
+            VortexSchemas.convert(VortexSchemas.toVortexArrowSchema(MAP_SCHEMA)))) {
+      assertThat(roundTrip.findField("props").type()).isInstanceOf(Types.MapType.class);
+      assertThat(roundTrip.findField("props").isOptional()).isTrue();
+      assertThat(roundTrip.findType("props.key")).isEqualTo(Types.StringType.get());
+      assertThat(roundTrip.findType("props.value")).isEqualTo(Types.IntegerType.get());
+      assertThat(roundTrip.findField("props").type().asMapType().isValueOptional()).isTrue();
+      // id, props, key, value
+      assertThat(TypeUtil.indexById(roundTrip.asStruct())).hasSize(4);
+    }
+  }
+
+  @Test
+  void convertRequiredMapValueBackToIceberg() {
+    Schema icebergSchema =
+        new Schema(
+            optional(
+                1,
+                "props",
+                Types.MapType.ofRequired(2, 3, Types.StringType.get(), Types.IntegerType.get())));
+
+    Schema roundTrip = VortexSchemas.convert(VortexSchemas.toArrowSchema(icebergSchema));
+
+    assertThat(roundTrip.findField("props").type().asMapType().isValueRequired()).isTrue();
+  }
+
+  @Test
+  void fixedIsStoredAsVariableWidthBinary() {
+    // Vortex rejects Arrow FixedSizeBinary unless it carries the arrow.uuid extension, so FIXED is
+    // written as plain binary and its length is re-imposed from the Iceberg schema on read.
+    Schema icebergSchema = new Schema(required(1, "f", Types.FixedType.ofLength(7)));
+
+    assertThat(VortexSchemas.toArrowSchema(icebergSchema).findField("f").getType())
+        .isEqualTo(ArrowType.Binary.INSTANCE);
+    assertThat(VortexSchemas.toVortexArrowSchema(icebergSchema).findField("f").getType())
+        .isEqualTo(new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary());
   }
 
   private static Field listField(String name, ArrowType listType, ArrowType elementType) {

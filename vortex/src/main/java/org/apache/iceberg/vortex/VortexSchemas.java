@@ -48,6 +48,12 @@ public final class VortexSchemas {
    */
   static final String VARIANT_EXTENSION_NAME = "arrow.parquet.variant";
 
+  // Canonical Arrow child names for the Map layout: a map field has a single non-nullable
+  // "entries" struct child holding "key" and "value" (see MapVector.DATA_VECTOR_NAME etc.).
+  public static final String MAP_ENTRIES_NAME = "entries";
+  public static final String MAP_KEY_NAME = "key";
+  public static final String MAP_VALUE_NAME = "value";
+
   private VortexSchemas() {}
 
   /** Convert a Vortex file's Arrow {@link org.apache.arrow.vector.types.pojo.Schema} to Iceberg. */
@@ -159,13 +165,12 @@ public final class VortexSchemas {
       case STRING -> new Field(name, new FieldType(nullable, ArrowType.Utf8.INSTANCE, null), null);
       case BINARY ->
           new Field(name, new FieldType(nullable, ArrowType.Binary.INSTANCE, null), null);
-      case FIXED -> {
-        Types.FixedType fixedType = (Types.FixedType) type;
-        yield new Field(
-            name,
-            new FieldType(nullable, new ArrowType.FixedSizeBinary(fixedType.length()), null),
-            null);
-      }
+      case FIXED ->
+          // Vortex has no fixed-width binary type: it rejects any Arrow FixedSizeBinary field that
+          // is not tagged as the arrow.uuid extension. FIXED is therefore stored as variable-width
+          // binary, and the declared length is re-imposed by the writer and reader from the Iceberg
+          // schema. A file read without an Iceberg schema surfaces these columns as BINARY.
+          new Field(name, new FieldType(nullable, ArrowType.Binary.INSTANCE, null), null);
       case DECIMAL -> {
         Types.DecimalType decimalType = (Types.DecimalType) type;
         yield new Field(
@@ -224,6 +229,21 @@ public final class VortexSchemas {
             name,
             new FieldType(nullable, ArrowType.List.INSTANCE, null),
             ImmutableList.of(elementField));
+      }
+      case MAP -> {
+        Types.MapType mapType = (Types.MapType) type;
+        Field keyField = toArrowField(MAP_KEY_NAME, mapType.keyType(), false);
+        Field valueField =
+            toArrowField(MAP_VALUE_NAME, mapType.valueType(), mapType.isValueOptional());
+        Field entriesField =
+            new Field(
+                MAP_ENTRIES_NAME,
+                new FieldType(false, ArrowType.Struct.INSTANCE, null),
+                ImmutableList.of(keyField, valueField));
+        yield new Field(
+            name,
+            new FieldType(nullable, new ArrowType.Map(false), null),
+            ImmutableList.of(entriesField));
       }
       case STRUCT -> {
         Types.StructType structType = (Types.StructType) type;
@@ -295,6 +315,9 @@ public final class VortexSchemas {
     } else if (arrowType
         instanceof dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.LargeList) {
       return ArrowType.LargeList.INSTANCE;
+    } else if (arrowType
+        instanceof dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Map map) {
+      return new ArrowType.Map(map.getKeysSorted());
     } else if (arrowType
         instanceof
         dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.FixedSizeList list) {
@@ -401,14 +424,13 @@ public final class VortexSchemas {
               name,
               new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary(),
               nullable);
-      case FIXED -> {
-        Types.FixedType fixedType = (Types.FixedType) type;
-        yield toVortexArrowField(
-            name,
-            new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.FixedSizeBinary(
-                fixedType.length()),
-            nullable);
-      }
+      case FIXED ->
+          // See toArrowField: Vortex rejects FixedSizeBinary outside the arrow.uuid extension, so
+          // FIXED is stored as variable-width binary and its length is enforced on write.
+          toVortexArrowField(
+              name,
+              new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary(),
+              nullable);
       case DECIMAL -> {
         Types.DecimalType decimalType = (Types.DecimalType) type;
         yield toVortexArrowField(
@@ -475,6 +497,7 @@ public final class VortexSchemas {
             null,
             ImmutableList.of(elementField));
       }
+      case MAP -> toVortexMapArrowField(name, (Types.MapType) type, nullable);
       case STRUCT -> {
         Types.StructType structType = (Types.StructType) type;
         ImmutableList.Builder<dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field>
@@ -520,6 +543,28 @@ public final class VortexSchemas {
   }
 
   private static dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field
+      toVortexMapArrowField(String name, Types.MapType mapType, boolean nullable) {
+    dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field keyField =
+        toVortexArrowField(MAP_KEY_NAME, mapType.keyType(), false);
+    dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field valueField =
+        toVortexArrowField(MAP_VALUE_NAME, mapType.valueType(), mapType.isValueOptional());
+    dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field entriesField =
+        toVortexArrowField(
+            MAP_ENTRIES_NAME,
+            new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Struct(),
+            false,
+            null,
+            ImmutableList.of(keyField, valueField));
+
+    return toVortexArrowField(
+        name,
+        new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Map(false),
+        nullable,
+        null,
+        ImmutableList.of(entriesField));
+  }
+
+  private static dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field
       toVortexVariantArrowField(String name, boolean nullable) {
     Map<String, String> extMetadata =
         ImmutableMap.of(
@@ -551,6 +596,7 @@ public final class VortexSchemas {
         children.build());
   }
 
+  @SuppressWarnings("checkstyle:CyclomaticComplexity")
   private static Type toIcebergType(Field field, AtomicInteger nextId) {
     // UUID is conveyed as the {@code arrow.uuid} extension over
     // FixedSizeBinary(16). Check metadata directly so this works whether or not
@@ -575,6 +621,8 @@ public final class VortexSchemas {
         || arrowType instanceof ArrowType.LargeList
         || arrowType instanceof ArrowType.FixedSizeList) {
       return toIcebergList(field, nextId);
+    } else if (arrowType instanceof ArrowType.Map) {
+      return toIcebergMap(field, nextId);
     } else if (arrowType instanceof ArrowType.Struct) {
       return Types.StructType.of(convertFields(field.getChildren(), nextId));
     }
@@ -594,6 +642,7 @@ public final class VortexSchemas {
     return null;
   }
 
+  @SuppressWarnings("checkstyle:CyclomaticComplexity")
   private static Type toIcebergType(
       dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field field, AtomicInteger nextId) {
     Type extensionType = toIcebergExtensionType(field);
@@ -629,6 +678,9 @@ public final class VortexSchemas {
             instanceof
             dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.FixedSizeList) {
       return toIcebergList(field, nextId);
+    } else if (arrowType
+        instanceof dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Map) {
+      return toIcebergMap(field, nextId);
     } else if (arrowType
         instanceof dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Struct) {
       return Types.StructType.of(convertVortexFields(field.getChildren(), nextId));
@@ -821,6 +873,36 @@ public final class VortexSchemas {
     return elementField.isNullable()
         ? Types.ListType.ofOptional(elementId, innerType)
         : Types.ListType.ofRequired(elementId, innerType);
+  }
+
+  private static Type toIcebergMap(Field field, AtomicInteger nextId) {
+    Field entries = field.getChildren().get(0);
+    Field keyField = entries.getChildren().get(0);
+    Field valueField = entries.getChildren().get(1);
+    int keyId = nextId.getAndIncrement();
+    Type keyType = toIcebergType(keyField, nextId);
+    int valueId = nextId.getAndIncrement();
+    Type valueType = toIcebergType(valueField, nextId);
+    return valueField.isNullable()
+        ? Types.MapType.ofOptional(keyId, valueId, keyType, valueType)
+        : Types.MapType.ofRequired(keyId, valueId, keyType, valueType);
+  }
+
+  private static Type toIcebergMap(
+      dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field field, AtomicInteger nextId) {
+    dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field entries =
+        field.getChildren().get(0);
+    dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field keyField =
+        entries.getChildren().get(0);
+    dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field valueField =
+        entries.getChildren().get(1);
+    int keyId = nextId.getAndIncrement();
+    Type keyType = toIcebergType(keyField, nextId);
+    int valueId = nextId.getAndIncrement();
+    Type valueType = toIcebergType(valueField, nextId);
+    return valueField.isNullable()
+        ? Types.MapType.ofOptional(keyId, valueId, keyType, valueType)
+        : Types.MapType.ofRequired(keyId, valueId, keyType, valueType);
   }
 
   /**
