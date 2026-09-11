@@ -114,6 +114,14 @@ public class GenericVortexReaders {
     return vector.getObjectNotNull(row);
   }
 
+  /**
+   * Reads an Iceberg {@code unknown} column, whose values are always null. The column is stored as
+   * an Arrow null vector, which holds no values to read.
+   */
+  public static VortexValueReader<Void> unknowns() {
+    return new ConstantReader<>(null);
+  }
+
   public static VortexValueReader<Boolean> bools() {
     return new BooleanReader();
   }

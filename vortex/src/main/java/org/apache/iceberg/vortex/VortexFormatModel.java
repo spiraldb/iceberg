@@ -428,15 +428,16 @@ public class VortexFormatModel<D, S, R>
       // Compute the columns to scan from the data file. Constants (identity partition values and
       // metadata columns such as _file, _spec_id and _partition) come from idToConstant, and
       // _is_deleted is synthesized by the reader, so none of those are projected from the file.
-      // _pos is excluded here too, but when it is requested it is materialized separately from
-      // Vortex's `row_idx` scan expression (see VortexIterable) rather than read from the file.
+      // _pos is excluded here too: when it is requested it is materialized from Vortex's `row_idx`
+      // scan expression (see VortexIterable) rather than read from the file. Every other metadata
+      // column stays in the projection, because the row lineage columns are stored in the data
+      // file when the engine does not supply an inheritance base; VortexIterable drops any column
+      // the file turns out not to have.
       Map<Integer, ?> constants = idToConstant == null ? Collections.emptyMap() : idToConstant;
       List<Types.NestedField> projection =
           schema.columns().stream()
-              .filter(
-                  field ->
-                      !constants.containsKey(field.fieldId())
-                          && !MetadataColumns.isMetadataColumn(field.name()))
+              .filter(field -> !constants.containsKey(field.fieldId()))
+              .filter(field -> !isSynthesizedColumn(field))
               .toList();
 
       boolean includeRowPosition =
@@ -470,6 +471,12 @@ public class VortexFormatModel<D, S, R>
           batchReaderFunc,
           caseSensitive,
           workerThreads);
+    }
+
+    /** Columns the reader materializes itself rather than reading from the data file. */
+    private static boolean isSynthesizedColumn(Types.NestedField field) {
+      return field.fieldId() == MetadataColumns.ROW_POSITION.fieldId()
+          || field.fieldId() == MetadataColumns.IS_DELETED.fieldId();
     }
 
     /**

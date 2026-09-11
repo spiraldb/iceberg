@@ -159,6 +159,10 @@ public final class VortexSchemas {
 
   private static Field toArrowField(String name, Type type, boolean nullable) {
     return switch (type.typeId()) {
+      case UNKNOWN ->
+          // Iceberg requires unknown fields to be optional and always null, which is exactly what
+          // an Arrow null column stores.
+          new Field(name, new FieldType(nullable, ArrowType.Null.INSTANCE, null), null);
       case BOOLEAN -> new Field(name, new FieldType(nullable, ArrowType.Bool.INSTANCE, null), null);
       case INTEGER ->
           new Field(
@@ -178,7 +182,10 @@ public final class VortexSchemas {
                   nullable, new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE), null),
               null);
       case STRING -> new Field(name, new FieldType(nullable, ArrowType.Utf8.INSTANCE, null), null);
-      case BINARY ->
+      case BINARY, GEOMETRY, GEOGRAPHY ->
+          // Geometry and geography are stored as WKB binary (see the geospatial appendix of the
+          // spec). The Iceberg schema in the file's metadata is what tells them apart from BINARY
+          // on read; a file read without one surfaces them as BINARY.
           new Field(name, new FieldType(nullable, ArrowType.Binary.INSTANCE, null), null);
       case FIXED -> throw unsupportedFixed(name);
       case DECIMAL -> {
@@ -395,6 +402,12 @@ public final class VortexSchemas {
   private static dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field toVortexArrowField(
       String name, Type type, boolean nullable) {
     return switch (type.typeId()) {
+      case UNKNOWN ->
+          // See toArrowField: unknown is always null, so it is stored as an Arrow null column.
+          toVortexArrowField(
+              name,
+              new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Null(),
+              nullable);
       case BOOLEAN ->
           toVortexArrowField(
               name,
@@ -429,7 +442,8 @@ public final class VortexSchemas {
               name,
               new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Utf8(),
               nullable);
-      case BINARY ->
+      case BINARY, GEOMETRY, GEOGRAPHY ->
+          // See toArrowField: geometry and geography are stored as WKB binary.
           toVortexArrowField(
               name,
               new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary(),

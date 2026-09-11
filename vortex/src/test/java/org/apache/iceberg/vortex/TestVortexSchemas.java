@@ -297,6 +297,43 @@ class TestVortexSchemas {
   }
 
   @Test
+  void unknownIsStoredAsAnArrowNullColumn() {
+    Schema icebergSchema = new Schema(optional(1, "u", Types.UnknownType.get()));
+
+    Field local = VortexSchemas.toArrowSchema(icebergSchema).findField("u");
+    assertThat(local.getType()).isEqualTo(ArrowType.Null.INSTANCE);
+    assertThat(local.isNullable()).isTrue();
+    assertThat(VortexSchemas.toVortexArrowSchema(icebergSchema).findField("u").getType())
+        .isEqualTo(new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Null());
+
+    // A null column read back without an Iceberg schema is unknown again.
+    assertThat(VortexSchemas.convert(VortexSchemas.toArrowSchema(icebergSchema)).findType("u"))
+        .isEqualTo(Types.UnknownType.get());
+  }
+
+  @Test
+  void geospatialIsStoredAsWkbBinary() {
+    // The spec stores geometry and geography as WKB binary, so both map to Arrow binary. Only the
+    // Iceberg schema in the file's metadata distinguishes them from BINARY on read.
+    Schema icebergSchema =
+        new Schema(
+            optional(1, "geom", Types.GeometryType.crs84()),
+            optional(2, "geog", Types.GeographyType.of("srid:4269")));
+
+    for (String name : List.of("geom", "geog")) {
+      assertThat(VortexSchemas.toArrowSchema(icebergSchema).findField(name).getType())
+          .isEqualTo(ArrowType.Binary.INSTANCE);
+      assertThat(VortexSchemas.toVortexArrowSchema(icebergSchema).findField(name).getType())
+          .isEqualTo(
+              new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary());
+    }
+
+    Schema roundTrip = VortexSchemas.convert(VortexSchemas.toArrowSchema(icebergSchema));
+    assertThat(roundTrip.findType("geom")).isEqualTo(Types.BinaryType.get());
+    assertThat(roundTrip.findType("geog")).isEqualTo(Types.BinaryType.get());
+  }
+
+  @Test
   void fixedIsRefusedWithANamedError() {
     // Vortex rejects Arrow FixedSizeBinary unless it carries the arrow.uuid extension, and the
     // rejection surfaces as an opaque native error when the writer is created. Refusing the schema

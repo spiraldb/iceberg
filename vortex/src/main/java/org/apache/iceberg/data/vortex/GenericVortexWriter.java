@@ -129,6 +129,10 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
   private static void writeValue(
       FieldVector vector, org.apache.iceberg.types.Type type, Object value, int rowIndex) {
     switch (type.typeId()) {
+      case UNKNOWN:
+        // Unreachable: Iceberg requires unknown fields to be optional, and every value is null, so
+        // writes go through writeNull. Kept so the switch stays total.
+        throw new IllegalArgumentException("Cannot write a non-null value for unknown: " + value);
       case BOOLEAN:
         ((BitVector) vector).setSafe(rowIndex, ((Boolean) value) ? 1 : 0);
         break;
@@ -149,6 +153,9 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
         ((VarCharVector) vector).setSafe(rowIndex, strBytes);
         break;
       case BINARY:
+      case GEOMETRY:
+      case GEOGRAPHY:
+        // Geometry and geography are WKB, written verbatim as binary (see VortexSchemas).
         byte[] binaryBytes;
         if (value instanceof ByteBuffer buffer) {
           binaryBytes = ByteBuffers.toByteArray(buffer);
@@ -391,6 +398,10 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
                 v instanceof ByteBuffer buffer
                     ? ByteBuffers.copy(buffer)
                     : ByteBuffer.wrap((byte[]) v));
+      case GEOMETRY, GEOGRAPHY:
+        // Iceberg geospatial bounds are min/max coordinate points, not byte ranges, so byte
+        // ordering would produce wrong bounds. Track counts only.
+        return new ColumnMetricsTracker<>(field.fieldId(), null);
       default:
         if (field.type().isNestedType() || field.type().isVariantType()) {
           // Lists, maps, and structs have no natural ordering — track counts only.

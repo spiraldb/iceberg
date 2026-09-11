@@ -278,7 +278,9 @@ public class GenericVortexReader implements VortexRowReader<Record> {
     }
 
     private static VortexValueReader<?> simpleReader(ArrowType arrowType) {
-      if (arrowType instanceof ArrowType.Bool) {
+      if (arrowType instanceof ArrowType.Null) {
+        return GenericVortexReaders.unknowns();
+      } else if (arrowType instanceof ArrowType.Bool) {
         return GenericVortexReaders.bools();
       } else if (arrowType instanceof ArrowType.Decimal) {
         return GenericVortexReaders.decimals();
