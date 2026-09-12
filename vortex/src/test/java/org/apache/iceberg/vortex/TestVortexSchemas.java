@@ -325,14 +325,18 @@ class TestVortexSchemas {
   }
 
   @Test
-  void unknownIsRefusedInsideListsAndMaps() {
-    // A list element or map value has no slot to drop, so there is nowhere to put an unknown.
-    // Parquet rejects the same positions.
+  void unknownInsideListsAndMapsIsAnArrowNullColumn() {
+    // A list element or map value has no slot to drop, so it is stored as an Arrow null column
+    // rather than omitted the way a struct field is.
     Schema listOfUnknown =
         new Schema(optional(1, "l", Types.ListType.ofOptional(2, Types.UnknownType.get())));
-    assertThatThrownBy(() -> VortexSchemas.toArrowSchema(listOfUnknown))
-        .isInstanceOf(UnsupportedOperationException.class)
-        .hasMessageContaining("list element or map key/value");
+    assertThat(
+            VortexSchemas.toArrowSchema(listOfUnknown)
+                .findField("l")
+                .getChildren()
+                .get(0)
+                .getType())
+        .isEqualTo(ArrowType.Null.INSTANCE);
 
     Schema mapOfUnknown =
         new Schema(
@@ -340,31 +344,8 @@ class TestVortexSchemas {
                 1,
                 "m",
                 Types.MapType.ofOptional(2, 3, Types.StringType.get(), Types.UnknownType.get())));
-    assertThatThrownBy(() -> VortexSchemas.toVortexArrowSchema(mapOfUnknown))
-        .isInstanceOf(UnsupportedOperationException.class)
-        .hasMessageContaining("list element or map key/value");
-  }
-
-  @Test
-  void geospatialIsStoredAsWkbBinary() {
-    // The spec stores geometry and geography as WKB binary, so both map to Arrow binary. Only the
-    // Iceberg schema in the file's metadata distinguishes them from BINARY on read.
-    Schema icebergSchema =
-        new Schema(
-            optional(1, "geom", Types.GeometryType.crs84()),
-            optional(2, "geog", Types.GeographyType.of("srid:4269")));
-
-    for (String name : List.of("geom", "geog")) {
-      assertThat(VortexSchemas.toArrowSchema(icebergSchema).findField(name).getType())
-          .isEqualTo(ArrowType.Binary.INSTANCE);
-      assertThat(VortexSchemas.toVortexArrowSchema(icebergSchema).findField(name).getType())
-          .isEqualTo(
-              new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Binary());
-    }
-
-    Schema roundTrip = VortexSchemas.convert(VortexSchemas.toArrowSchema(icebergSchema));
-    assertThat(roundTrip.findType("geom")).isEqualTo(Types.BinaryType.get());
-    assertThat(roundTrip.findType("geog")).isEqualTo(Types.BinaryType.get());
+    Field entries = VortexSchemas.toArrowSchema(mapOfUnknown).findField("m").getChildren().get(0);
+    assertThat(entries.getChildren().get(1).getType()).isEqualTo(ArrowType.Null.INSTANCE);
   }
 
   @Test

@@ -224,6 +224,10 @@ public class SparkVortexReader implements VortexRowReader<InternalRow> {
         case DOUBLE -> doubleReader(primField.getType());
         case STRING -> SparkVortexValueReaders.utf8String(primField.getType());
         case BINARY -> SparkVortexValueReaders.bytes(primField.getType());
+          // Reached for a list element or map key/value: a struct field of type unknown is not in
+          // the file at all, so it never gets here. Spark models unknown as NullType, whose only
+          // value is null.
+        case UNKNOWN -> GenericVortexReaders.unknowns();
         case DECIMAL -> SparkVortexValueReaders.decimals();
         case TIMESTAMP, TIMESTAMP_NANO -> {
           ArrowType.Timestamp ts = (ArrowType.Timestamp) primField.getType();

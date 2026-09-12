@@ -177,7 +177,12 @@ public final class VortexSchemas {
 
   private static Field toArrowField(String name, Type type, boolean nullable) {
     return switch (type.typeId()) {
-      case UNKNOWN -> throw unsupportedUnknown(name);
+      case UNKNOWN ->
+          // Reached only for a list element or a map key/value: struct fields of type unknown are
+          // dropped before conversion (see writtenFields). Those positions have no slot to drop,
+          // so they are stored as an Arrow null column, which holds no values and is exactly what
+          // unknown means.
+          new Field(name, new FieldType(nullable, ArrowType.Null.INSTANCE, null), null);
       case BOOLEAN -> new Field(name, new FieldType(nullable, ArrowType.Bool.INSTANCE, null), null);
       case INTEGER ->
           new Field(
@@ -417,7 +422,13 @@ public final class VortexSchemas {
   private static dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field toVortexArrowField(
       String name, Type type, boolean nullable) {
     return switch (type.typeId()) {
-      case UNKNOWN -> throw unsupportedUnknown(name);
+      case UNKNOWN ->
+          // See toArrowField: a list element or map key/value of type unknown is stored as an
+          // Arrow null column.
+          toVortexArrowField(
+              name,
+              new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Null(),
+              nullable);
       case BOOLEAN ->
           toVortexArrowField(
               name,
@@ -910,16 +921,6 @@ public final class VortexSchemas {
    * therefore refused here, while the file is still being described, so callers get a message
    * naming the column and the reason.
    */
-  /**
-   * Struct fields of type {@code unknown} are dropped before conversion (see {@link
-   * #writtenFields}), so reaching a conversion means the field is a list element or a map key or
-   * value, which has no slot to drop. Parquet rejects the same positions.
-   */
-  private static UnsupportedOperationException unsupportedUnknown(String name) {
-    return new UnsupportedOperationException(
-        "Cannot write unknown as list element or map key/value: " + name);
-  }
-
   private static UnsupportedOperationException unsupportedFixed(String name) {
     return new UnsupportedOperationException(
         "Cannot write Iceberg FIXED column "
