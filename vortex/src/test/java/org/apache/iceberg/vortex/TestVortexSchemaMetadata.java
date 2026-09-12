@@ -56,9 +56,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Covers the Iceberg schema Vortex files carry in their file metadata, and the id-based column
- * binding it enables. The projection scenarios in {@link TestGenericReadProjection} exercise
- * renames end to end; these tests pin the mechanism itself, including what happens for a file that
- * carries no schema at all.
+ * binding it enables: that the schema is written, that a renamed column is bound through it, that
+ * an id the file does not have is not bound by name instead, and that a file carrying no schema
+ * falls back to binding by name.
  */
 public class TestVortexSchemaMetadata {
   private static final Schema SCHEMA =
@@ -145,8 +145,8 @@ public class TestVortexSchemaMetadata {
 
   @Test
   public void testFileWithoutAnIcebergSchemaStillBindsByName() throws IOException {
-    // Written straight through the Vortex writer with no metadata, standing in for a file produced
-    // before the schema was persisted or by another producer.
+    // Written straight through the Vortex writer with no metadata, standing in for a file whose
+    // producer stores no Iceberg schema.
     Schema flat =
         new Schema(
             required(1, "id", Types.LongType.get()), optional(2, "data", Types.StringType.get()));

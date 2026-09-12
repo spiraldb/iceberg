@@ -343,9 +343,9 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
           yield Expression.not(child);
         }
       }
-        // IS_NAN / NOT_NAN: Vortex compares NaN as equal to itself (verified against 0.86.1:
-        // `f == f` matches NaN rows and `f != f` matches none), so there is no expression that
-        // isolates NaN. Pushing one down would drop rows the predicate matches.
+        // IS_NAN / NOT_NAN: Vortex compares NaN as equal to itself, so `f == f` matches NaN rows
+        // and `f != f` matches none. Nothing available here isolates NaN, and pushing an
+        // approximation down would drop rows the predicate matches.
       default -> UNCONVERTIBLE;
     };
   }

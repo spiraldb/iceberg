@@ -220,9 +220,9 @@ class SparkFileWriterFactory extends RegistryBasedFileWriterFactory<InternalRow,
                   .withKeyMetadata(file.keyMetadata())
                   .buildPositionWriter();
             // This branch only runs for position deletes that carry row data. Vortex position
-            // delete files store just [file_path, pos] (see PositionDeleteVortexWriter), so say
-            // that rather than implying the format is unwired: position deletes without row data
-            // go through the registry writer above and do support Vortex.
+            // delete files store just [file_path, pos] (see PositionDeleteVortexWriter), so it is
+            // the row data that cannot be written, not the format: position deletes without it go
+            // through the registry writer above.
           case VORTEX ->
               throw new UnsupportedOperationException(
                   "Cannot write pos-deletes with row data for Vortex: Vortex position delete files "

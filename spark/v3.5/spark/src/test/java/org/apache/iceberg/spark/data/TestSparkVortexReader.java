@@ -43,9 +43,9 @@ import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.types.StructType;
 
 /**
- * The Spark counterpart of TestGenericVortex: the same type and schema scenarios, written as
- * generic records and read back through {@link SparkVortexReader}. Parquet, ORC and Avro all have
- * one of these; Vortex had no type coverage on the Spark read path at all.
+ * Type and schema coverage for the Spark read path: each scenario is written as generic records and
+ * read back through {@link SparkVortexReader}, so the Spark readers are exercised over the same
+ * types, nested shapes and projections as the generic ones.
  */
 public class TestSparkVortexReader extends AvroDataTestBase {
   @Override

@@ -138,7 +138,7 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
   public Stream<FieldMetrics<?>> metrics() {
     Stream.Builder<FieldMetrics<?>> builder = Stream.builder();
     for (int i = 0; i < columns.size(); i++) {
-      // Unknown columns are not stored, so they have no metrics, matching Parquet.
+      // Unknown columns are not stored, so they have no metrics.
       if (trackers[i] != null) {
         builder.add(trackers[i].toFieldMetrics());
       }

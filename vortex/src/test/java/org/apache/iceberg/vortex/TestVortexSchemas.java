@@ -298,8 +298,8 @@ class TestVortexSchemas {
 
   @Test
   void unknownColumnsAreNotWrittenToTheFile() {
-    // Unknown holds nothing but nulls, so like Parquet the column is left out of the file and the
-    // reader fills it back in. Struct children are dropped the same way.
+    // Unknown holds nothing but nulls, so the column is left out of the file and the reader fills
+    // it back in. Struct children are dropped the same way.
     Schema icebergSchema =
         new Schema(
             required(1, "id", Types.LongType.get()),

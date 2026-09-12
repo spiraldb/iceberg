@@ -59,8 +59,8 @@ public final class VortexSchemas {
 
   /**
    * Vortex file-metadata key holding the JSON Iceberg schema the file was written with. Vortex
-   * drops Arrow field and schema metadata, so this file-level channel (added in 0.86) is the only
-   * way to persist Iceberg field ids.
+   * drops Arrow field and schema metadata, so this file-level channel is the only way to persist
+   * Iceberg field ids.
    */
   public static final String ICEBERG_SCHEMA_KEY = "iceberg.schema";
 
@@ -134,8 +134,8 @@ public final class VortexSchemas {
 
   /**
    * Drops the {@code unknown} fields from {@code fields}. Unknown columns hold nothing but nulls,
-   * so like Parquet they are left out of the file entirely and readers fill them back in as null.
-   * Writers use this to line their columns up with the Arrow vectors that were actually created.
+   * so they are left out of the file entirely and readers fill them back in as null. Writers use
+   * this to line their columns up with the Arrow vectors that were actually created.
    */
   public static List<Types.NestedField> writtenFields(List<Types.NestedField> fields) {
     ImmutableList.Builder<Types.NestedField> written = ImmutableList.builder();
@@ -916,10 +916,9 @@ public final class VortexSchemas {
 
   /**
    * Vortex has no fixed-width binary type: it rejects every Arrow FixedSizeBinary field that is not
-   * tagged as the {@code arrow.uuid} extension (verified against 0.86.1), and the rejection
-   * surfaces as an opaque native failure when the writer is created. Iceberg FIXED columns are
-   * therefore refused here, while the file is still being described, so callers get a message
-   * naming the column and the reason.
+   * tagged as the {@code arrow.uuid} extension, and the rejection surfaces as an opaque native
+   * failure when the writer is created. Iceberg FIXED columns are therefore refused here, while the
+   * file is still being described, so callers get a message naming the column and the reason.
    */
   private static UnsupportedOperationException unsupportedFixed(String name) {
     return new UnsupportedOperationException(
@@ -1126,8 +1125,7 @@ public final class VortexSchemas {
    *
    * <p>When the file's fields carry Iceberg ids, binding is by id alone, so a column renamed since
    * the file was written still resolves and a newly added column that reuses an old name does not.
-   * Files written before the Iceberg schema was persisted carry no ids, so binding falls back to
-   * matching by name, which is what those files have always used.
+   * A file that carries no ids is bound by name instead.
    */
   public static final class FieldBinding {
     private final Map<Integer, Field> byId;

@@ -43,10 +43,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Unknown columns are never stored (Vortex, like Parquet, leaves them out of the file), so the
- * Spark writer has fewer Arrow vectors than the schema has columns and the reader has to fill the
- * column back in. This pins both halves, including a struct child, where the Arrow struct has no
- * matching field either.
+ * Unknown columns are never stored, so the Spark writer has fewer Arrow vectors than the schema has
+ * columns and the reader has to fill the column back in. This pins both halves, including a struct
+ * child, where the Arrow struct has no matching field either.
  */
 public class TestSparkVortexUnknown {
   private static final Schema SCHEMA =

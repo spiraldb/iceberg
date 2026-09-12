@@ -159,10 +159,9 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     org.apache.arrow.vector.types.pojo.Schema fileArrowSchema =
         VortexSchemas.toArrowSchema(vortexArrowSchema);
 
-    // Files written by this integration carry their Iceberg schema in Vortex file metadata. Tag
-    // the Arrow fields with the ids from it so readers bind columns by id. A file written by
-    // another producer has no schema to read, which is exactly the case a name mapping exists for;
-    // without either, binding falls back to matching by name.
+    // A file whose writer stored an Iceberg schema in Vortex file metadata carries field ids: tag
+    // the Arrow fields with them so readers bind columns by id. A file that stores no schema is
+    // exactly the case a name mapping exists for; without either, binding falls back to by name.
     Schema fileIcebergSchema = readIcebergSchema(session, readable);
     if (fileIcebergSchema != null) {
       fileArrowSchema = VortexSchemas.withFieldIds(fileArrowSchema, fileIcebergSchema);
@@ -267,9 +266,8 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
   /**
    * Reads the Iceberg schema the file was written with from Vortex file metadata, or returns null
-   * when the file carries none. A file written by another producer, or by a version of this
-   * integration that predates the metadata, simply has no entry; unreadable JSON is treated the
-   * same way rather than failing the scan, since name-based binding still works.
+   * when the file carries none. A file that has no entry is not an error, and neither is one whose
+   * entry will not parse: both fall back to binding by name rather than failing the scan.
    */
   private Schema readIcebergSchema(Session session, NativeReadable readable) {
     byte[] json;
