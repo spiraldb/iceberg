@@ -319,6 +319,7 @@ public class VortexFormatModel<D, S, R>
     private PositionDeleteIndex posDeletes;
     private int workerThreads = TableProperties.VORTEX_WORKER_THREADS_DEFAULT;
     private boolean reuseContainers = false;
+    private NameMapping nameMapping;
 
     private ReadBuilderWrapper(
         InputFile inputFile,
@@ -403,7 +404,8 @@ public class VortexFormatModel<D, S, R>
     }
 
     @Override
-    public ReadBuilder<D, S> withNameMapping(NameMapping nameMapping) {
+    public ReadBuilder<D, S> withNameMapping(NameMapping newNameMapping) {
+      this.nameMapping = newNameMapping;
       return this;
     }
 
@@ -469,6 +471,7 @@ public class VortexFormatModel<D, S, R>
           reuseContainers,
           readerFunc,
           batchReaderFunc,
+          nameMapping,
           caseSensitive,
           workerThreads);
     }

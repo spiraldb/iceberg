@@ -49,6 +49,7 @@ import org.apache.iceberg.io.CloseableGroup;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.io.InputFile;
+import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
@@ -72,6 +73,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   private final Function<org.apache.arrow.vector.types.pojo.Schema, VortexBatchReader<T>>
       batchReaderFunction;
   private final List<Types.NestedField> projection;
+  private final NameMapping nameMapping;
   private final boolean caseSensitive;
   private final int workerThreads;
 
@@ -87,6 +89,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
       boolean reuseContainers,
       Function<org.apache.arrow.vector.types.pojo.Schema, VortexRowReader<T>> readerFunction,
       Function<org.apache.arrow.vector.types.pojo.Schema, VortexBatchReader<T>> batchReaderFunction,
+      NameMapping nameMapping,
       boolean caseSensitive,
       int workerThreads) {
     this.inputFile = inputFile;
@@ -100,6 +103,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     this.reuseContainers = reuseContainers;
     this.rowReaderFunc = readerFunction;
     this.batchReaderFunction = batchReaderFunction;
+    this.nameMapping = nameMapping;
     this.caseSensitive = caseSensitive;
     this.workerThreads = workerThreads;
   }
@@ -156,11 +160,14 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
         VortexSchemas.toArrowSchema(vortexArrowSchema);
 
     // Files written by this integration carry their Iceberg schema in Vortex file metadata. Tag
-    // the Arrow fields with the ids from it so readers bind columns by id; files without it (or
-    // written by another producer) stay on name-based binding.
+    // the Arrow fields with the ids from it so readers bind columns by id. A file written by
+    // another producer has no schema to read, which is exactly the case a name mapping exists for;
+    // without either, binding falls back to matching by name.
     Schema fileIcebergSchema = readIcebergSchema(session, readable);
     if (fileIcebergSchema != null) {
       fileArrowSchema = VortexSchemas.withFieldIds(fileArrowSchema, fileIcebergSchema);
+    } else if (nameMapping != null) {
+      fileArrowSchema = VortexSchemas.withFieldIds(fileArrowSchema, nameMapping);
     }
 
     Optional<dev.vortex.api.Expression> scanFilter =

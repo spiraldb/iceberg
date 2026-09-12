@@ -45,6 +45,9 @@ import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.OutputFile;
+import org.apache.iceberg.mapping.MappedField;
+import org.apache.iceberg.mapping.MappingUtil;
+import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.StructType;
@@ -166,6 +169,38 @@ public class TestVortexSchemaMetadata {
     assertThat(readOne(file, renamed).getField("payload")).isNull();
   }
 
+  @Test
+  public void testNameMappingSuppliesFieldIdsForAFileWithoutASchema() throws IOException {
+    Schema flat =
+        new Schema(
+            required(1, "id", Types.LongType.get()), optional(2, "data", Types.StringType.get()));
+    InputFile file = writeWithoutMetadata(flat);
+
+    // The file carries no ids, so a rename can only be resolved through a name mapping built from
+    // the schema the file was written with.
+    NameMapping mapping = MappingUtil.create(flat);
+    Schema renamed =
+        new Schema(
+            required(1, "id", Types.LongType.get()),
+            optional(2, "payload", Types.StringType.get()));
+
+    assertThat(readOne(file, renamed, null).getField("payload")).isNull();
+    assertThat(readOne(file, renamed, mapping).getField("payload")).isEqualTo("a");
+  }
+
+  @Test
+  public void testStoredSchemaWinsOverNameMapping() throws IOException {
+    InputFile file = write(SCHEMA, record(SCHEMA));
+
+    // A mapping that points the file's own names at unrelated ids must not displace the schema the
+    // file carries.
+    NameMapping mapping = NameMapping.of(MappedField.of(999, "id"), MappedField.of(998, "data"));
+    Record read = readOne(file, SCHEMA, mapping);
+
+    assertThat(read.getField("id")).isEqualTo(1L);
+    assertThat(read.getField("data")).isEqualTo("a");
+  }
+
   private static Record record(Schema schema) {
     Record location = GenericRecord.create(schema.findType("location").asStructType());
     location.setField("lat", 1.0d);
@@ -237,8 +272,13 @@ public class TestVortexSchemaMetadata {
   }
 
   private static Record readOne(InputFile file, Schema projection) throws IOException {
+    return readOne(file, projection, null);
+  }
+
+  private static Record readOne(InputFile file, Schema projection, NameMapping mapping)
+      throws IOException {
     try (CloseableIterable<Record> records =
-        formatModel().readBuilder(file).project(projection).build()) {
+        formatModel().readBuilder(file).project(projection).withNameMapping(mapping).build()) {
       List<Record> rows = Lists.newArrayList(records);
       assertThat(rows).hasSize(1);
       return rows.get(0);

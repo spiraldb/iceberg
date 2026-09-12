@@ -31,6 +31,8 @@ import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.mapping.MappedFields;
+import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
@@ -1010,6 +1012,80 @@ public final class VortexSchemas {
                 withFieldId(entries.get(0), map.keyId(), map.keyType()),
                 withFieldId(entries.get(1), map.valueId(), map.valueType())));
     return ImmutableList.of(annotatedEntries);
+  }
+
+  /**
+   * Returns a copy of {@code arrowSchema} with every field annotated with the Iceberg id the {@code
+   * mapping} gives it, for files that do not carry an Iceberg schema of their own.
+   *
+   * <p>Fields the mapping does not name are left unannotated, along with everything below them, and
+   * fall back to name-based binding.
+   */
+  public static org.apache.arrow.vector.types.pojo.Schema withFieldIds(
+      org.apache.arrow.vector.types.pojo.Schema arrowSchema, NameMapping mapping) {
+    return new org.apache.arrow.vector.types.pojo.Schema(
+        withMappedIds(arrowSchema.getFields(), mapping.asMappedFields()),
+        arrowSchema.getCustomMetadata());
+  }
+
+  private static List<Field> withMappedIds(List<Field> arrowFields, MappedFields mapping) {
+    if (mapping == null) {
+      return arrowFields;
+    }
+
+    ImmutableList.Builder<Field> annotated = ImmutableList.builder();
+    for (Field arrowField : arrowFields) {
+      annotated.add(withMappedId(arrowField, mapping));
+    }
+
+    return annotated.build();
+  }
+
+  private static Field withMappedId(Field arrowField, MappedFields mapping) {
+    Integer id = mapping.id(arrowField.getName());
+    if (id == null) {
+      return arrowField;
+    }
+
+    MappedFields nested = mapping.field(id).nestedMapping();
+    Map<String, String> metadata =
+        ImmutableMap.<String, String>builder()
+            .putAll(arrowField.getMetadata())
+            .put(FIELD_ID_KEY, String.valueOf(id))
+            .buildKeepingLast();
+
+    return new Field(
+        arrowField.getName(),
+        new FieldType(
+            arrowField.isNullable(), arrowField.getType(), arrowField.getDictionary(), metadata),
+        mappedChildren(arrowField, nested));
+  }
+
+  /**
+   * Name mappings name list elements {@code element} and map entries {@code key} and {@code value},
+   * matching the Arrow child names, except that Arrow nests a map's key and value one level deeper
+   * inside its {@code entries} struct.
+   */
+  private static List<Field> mappedChildren(Field arrowField, MappedFields nested) {
+    List<Field> children = arrowField.getChildren();
+    if (children.isEmpty() || nested == null || isVariantField(arrowField)) {
+      return children;
+    }
+
+    if (arrowField.getType() instanceof ArrowType.Map) {
+      Field entries = children.get(0);
+      if (entries.getChildren().size() != 2) {
+        return children;
+      }
+
+      return ImmutableList.of(
+          new Field(
+              entries.getName(),
+              entries.getFieldType(),
+              withMappedIds(entries.getChildren(), nested)));
+    }
+
+    return withMappedIds(children, nested);
   }
 
   /** Returns the Iceberg id {@link #withFieldIds} attached to {@code field}, or null. */
