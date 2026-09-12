@@ -125,11 +125,27 @@ public final class VortexSchemas {
   /** Convert an Iceberg Schema to an Arrow Schema suitable for local Arrow vectors. */
   public static org.apache.arrow.vector.types.pojo.Schema toArrowSchema(Schema icebergSchema) {
     ImmutableList.Builder<Field> fields = ImmutableList.builder();
-    for (Types.NestedField column : icebergSchema.columns()) {
+    for (Types.NestedField column : writtenFields(icebergSchema.columns())) {
       fields.add(toArrowField(column.name(), column.type(), column.isOptional()));
     }
 
     return new org.apache.arrow.vector.types.pojo.Schema(fields.build());
+  }
+
+  /**
+   * Drops the {@code unknown} fields from {@code fields}. Unknown columns hold nothing but nulls,
+   * so like Parquet they are left out of the file entirely and readers fill them back in as null.
+   * Writers use this to line their columns up with the Arrow vectors that were actually created.
+   */
+  public static List<Types.NestedField> writtenFields(List<Types.NestedField> fields) {
+    ImmutableList.Builder<Types.NestedField> written = ImmutableList.builder();
+    for (Types.NestedField field : fields) {
+      if (field.type().typeId() != Type.TypeID.UNKNOWN) {
+        written.add(field);
+      }
+    }
+
+    return written.build();
   }
 
   /**
@@ -152,7 +168,7 @@ public final class VortexSchemas {
       Schema icebergSchema) {
     ImmutableList.Builder<dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field> fields =
         ImmutableList.builder();
-    for (Types.NestedField column : icebergSchema.columns()) {
+    for (Types.NestedField column : writtenFields(icebergSchema.columns())) {
       fields.add(toVortexArrowField(column.name(), column.type(), column.isOptional()));
     }
 
@@ -161,10 +177,7 @@ public final class VortexSchemas {
 
   private static Field toArrowField(String name, Type type, boolean nullable) {
     return switch (type.typeId()) {
-      case UNKNOWN ->
-          // Iceberg requires unknown fields to be optional and always null, which is exactly what
-          // an Arrow null column stores.
-          new Field(name, new FieldType(nullable, ArrowType.Null.INSTANCE, null), null);
+      case UNKNOWN -> throw unsupportedUnknown(name);
       case BOOLEAN -> new Field(name, new FieldType(nullable, ArrowType.Bool.INSTANCE, null), null);
       case INTEGER ->
           new Field(
@@ -267,7 +280,7 @@ public final class VortexSchemas {
       case STRUCT -> {
         Types.StructType structType = (Types.StructType) type;
         ImmutableList.Builder<Field> children = ImmutableList.builder();
-        for (Types.NestedField field : structType.fields()) {
+        for (Types.NestedField field : writtenFields(structType.fields())) {
           children.add(toArrowField(field.name(), field.type(), field.isOptional()));
         }
 
@@ -404,12 +417,7 @@ public final class VortexSchemas {
   private static dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field toVortexArrowField(
       String name, Type type, boolean nullable) {
     return switch (type.typeId()) {
-      case UNKNOWN ->
-          // See toArrowField: unknown is always null, so it is stored as an Arrow null column.
-          toVortexArrowField(
-              name,
-              new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Null(),
-              nullable);
+      case UNKNOWN -> throw unsupportedUnknown(name);
       case BOOLEAN ->
           toVortexArrowField(
               name,
@@ -522,7 +530,7 @@ public final class VortexSchemas {
         Types.StructType structType = (Types.StructType) type;
         ImmutableList.Builder<dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field>
             children = ImmutableList.builder();
-        for (Types.NestedField field : structType.fields()) {
+        for (Types.NestedField field : writtenFields(structType.fields())) {
           children.add(toVortexArrowField(field.name(), field.type(), field.isOptional()));
         }
 
@@ -902,6 +910,16 @@ public final class VortexSchemas {
    * therefore refused here, while the file is still being described, so callers get a message
    * naming the column and the reason.
    */
+  /**
+   * Struct fields of type {@code unknown} are dropped before conversion (see {@link
+   * #writtenFields}), so reaching a conversion means the field is a list element or a map key or
+   * value, which has no slot to drop. Parquet rejects the same positions.
+   */
+  private static UnsupportedOperationException unsupportedUnknown(String name) {
+    return new UnsupportedOperationException(
+        "Cannot write unknown as list element or map key/value: " + name);
+  }
+
   private static UnsupportedOperationException unsupportedFixed(String name) {
     return new UnsupportedOperationException(
         "Cannot write Iceberg FIXED column "

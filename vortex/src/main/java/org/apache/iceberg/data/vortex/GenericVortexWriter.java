@@ -77,13 +77,26 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
   private static final LocalDateTime LOCAL_EPOCH = LocalDateTime.of(1970, 1, 1, 0, 0, 0, 0);
 
   private final List<Types.NestedField> columns;
+
+  // Unknown columns are not written to the file at all (see VortexSchemas#writtenFields), so the
+  // Arrow root holds fewer vectors than the schema has columns. Maps each column to its vector,
+  // with -1 for the unknown columns that have none.
+  private final int[] vectorIndex;
   private final ColumnMetricsTracker<?>[] trackers;
 
   private GenericVortexWriter(Schema schema) {
     this.columns = schema.columns();
+    this.vectorIndex = new int[columns.size()];
     this.trackers = new ColumnMetricsTracker[columns.size()];
+    int nextVector = 0;
     for (int i = 0; i < columns.size(); i++) {
-      trackers[i] = newTracker(columns.get(i));
+      if (columns.get(i).type().typeId() == Type.TypeID.UNKNOWN) {
+        vectorIndex[i] = -1;
+      } else {
+        vectorIndex[i] = nextVector;
+        nextVector += 1;
+        trackers[i] = newTracker(columns.get(i));
+      }
     }
   }
 
@@ -95,8 +108,13 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
   @SuppressWarnings("unchecked")
   public void write(Record datum, VectorSchemaRoot root, int rowIndex) {
     for (int fieldIndex = 0; fieldIndex < columns.size(); fieldIndex++) {
+      if (vectorIndex[fieldIndex] < 0) {
+        // An unknown column holds nothing but nulls and is not stored.
+        continue;
+      }
+
       Types.NestedField field = columns.get(fieldIndex);
-      FieldVector vector = root.getVector(fieldIndex);
+      FieldVector vector = root.getVector(vectorIndex[fieldIndex]);
       Object value = datum.get(fieldIndex);
 
       ColumnMetricsTracker<Object> tracker = (ColumnMetricsTracker<Object>) trackers[fieldIndex];
@@ -120,7 +138,10 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
   public Stream<FieldMetrics<?>> metrics() {
     Stream.Builder<FieldMetrics<?>> builder = Stream.builder();
     for (int i = 0; i < columns.size(); i++) {
-      builder.add(trackers[i].toFieldMetrics());
+      // Unknown columns are not stored, so they have no metrics, matching Parquet.
+      if (trackers[i] != null) {
+        builder.add(trackers[i].toFieldMetrics());
+      }
     }
     return builder.build();
   }
@@ -235,6 +256,11 @@ public class GenericVortexWriter implements VortexValueWriter<Record> {
         List<Types.NestedField> structFields = structType.fields();
         for (int i = 0; i < structFields.size(); i++) {
           Types.NestedField structField = structFields.get(i);
+          if (structField.type().typeId() == Type.TypeID.UNKNOWN) {
+            // Not stored, so the Arrow struct has no child to write it to.
+            continue;
+          }
+
           // Bind each Iceberg child to the Arrow child of the same name; the Arrow struct is built
           // from the write schema, so names line up even if ordinals were to drift.
           FieldVector childVector = (FieldVector) structVector.getChild(structField.name());

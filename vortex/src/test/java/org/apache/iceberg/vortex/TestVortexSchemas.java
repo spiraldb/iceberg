@@ -297,18 +297,52 @@ class TestVortexSchemas {
   }
 
   @Test
-  void unknownIsStoredAsAnArrowNullColumn() {
-    Schema icebergSchema = new Schema(optional(1, "u", Types.UnknownType.get()));
+  void unknownColumnsAreNotWrittenToTheFile() {
+    // Unknown holds nothing but nulls, so like Parquet the column is left out of the file and the
+    // reader fills it back in. Struct children are dropped the same way.
+    Schema icebergSchema =
+        new Schema(
+            required(1, "id", Types.LongType.get()),
+            optional(2, "u", Types.UnknownType.get()),
+            optional(
+                3,
+                "nested",
+                Types.StructType.of(
+                    required(4, "kept", Types.IntegerType.get()),
+                    optional(5, "dropped", Types.UnknownType.get()))));
 
-    Field local = VortexSchemas.toArrowSchema(icebergSchema).findField("u");
-    assertThat(local.getType()).isEqualTo(ArrowType.Null.INSTANCE);
-    assertThat(local.isNullable()).isTrue();
-    assertThat(VortexSchemas.toVortexArrowSchema(icebergSchema).findField("u").getType())
-        .isEqualTo(new dev.vortex.relocated.org.apache.arrow.vector.types.pojo.ArrowType.Null());
+    org.apache.arrow.vector.types.pojo.Schema arrow = VortexSchemas.toArrowSchema(icebergSchema);
+    assertThat(arrow.getFields()).extracting(Field::getName).containsExactly("id", "nested");
+    assertThat(arrow.findField("nested").getChildren())
+        .extracting(Field::getName)
+        .containsExactly("kept");
 
-    // A null column read back without an Iceberg schema is unknown again.
-    assertThat(VortexSchemas.convert(VortexSchemas.toArrowSchema(icebergSchema)).findType("u"))
-        .isEqualTo(Types.UnknownType.get());
+    dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Schema vortexArrow =
+        VortexSchemas.toVortexArrowSchema(icebergSchema);
+    assertThat(vortexArrow.getFields())
+        .extracting(dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Field::getName)
+        .containsExactly("id", "nested");
+  }
+
+  @Test
+  void unknownIsRefusedInsideListsAndMaps() {
+    // A list element or map value has no slot to drop, so there is nowhere to put an unknown.
+    // Parquet rejects the same positions.
+    Schema listOfUnknown =
+        new Schema(optional(1, "l", Types.ListType.ofOptional(2, Types.UnknownType.get())));
+    assertThatThrownBy(() -> VortexSchemas.toArrowSchema(listOfUnknown))
+        .isInstanceOf(UnsupportedOperationException.class)
+        .hasMessageContaining("list element or map key/value");
+
+    Schema mapOfUnknown =
+        new Schema(
+            optional(
+                1,
+                "m",
+                Types.MapType.ofOptional(2, 3, Types.StringType.get(), Types.UnknownType.get())));
+    assertThatThrownBy(() -> VortexSchemas.toVortexArrowSchema(mapOfUnknown))
+        .isInstanceOf(UnsupportedOperationException.class)
+        .hasMessageContaining("list element or map key/value");
   }
 
   @Test

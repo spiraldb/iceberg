@@ -61,7 +61,9 @@ final class VortexMetrics {
   @SuppressWarnings("checkstyle:CyclomaticComplexity")
   static Metrics fromWriteSummary(
       Schema schema, MetricsConfig metricsConfig, VortexWriteSummary summary) {
-    List<Types.NestedField> columns = schema.columns();
+    // Vortex reports statistics per stored column, and unknown columns are not stored, so the
+    // indexes it returns line up with the written columns rather than with schema.columns().
+    List<Types.NestedField> columns = VortexSchemas.writtenFields(schema.columns());
     Map<Integer, Long> columnSizes = Maps.newHashMap();
     Map<Integer, Long> valueCounts = Maps.newHashMap();
     Map<Integer, Long> nullValueCounts = Maps.newHashMap();

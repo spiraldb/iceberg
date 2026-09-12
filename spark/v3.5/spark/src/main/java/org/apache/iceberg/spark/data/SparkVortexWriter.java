@@ -58,8 +58,23 @@ import org.apache.spark.unsafe.types.UTF8String;
 public class SparkVortexWriter implements VortexValueWriter<InternalRow> {
   private final List<Types.NestedField> columns;
 
+  // Unknown columns are not written to the file at all (see VortexSchemas#writtenFields), so the
+  // Arrow root holds fewer vectors than the schema has columns. Maps each column to its vector,
+  // with -1 for the unknown columns that have none.
+  private final int[] vectorIndex;
+
   public SparkVortexWriter(Schema schema) {
     this.columns = schema.columns();
+    this.vectorIndex = new int[columns.size()];
+    int nextVector = 0;
+    for (int i = 0; i < columns.size(); i++) {
+      if (columns.get(i).type().typeId() == org.apache.iceberg.types.Type.TypeID.UNKNOWN) {
+        vectorIndex[i] = -1;
+      } else {
+        vectorIndex[i] = nextVector;
+        nextVector += 1;
+      }
+    }
   }
 
   public static VortexValueWriter<InternalRow> buildWriter(Schema schema) {
@@ -69,8 +84,13 @@ public class SparkVortexWriter implements VortexValueWriter<InternalRow> {
   @Override
   public void write(InternalRow datum, VectorSchemaRoot root, int rowIndex) {
     for (int fieldIndex = 0; fieldIndex < columns.size(); fieldIndex++) {
+      if (vectorIndex[fieldIndex] < 0) {
+        // An unknown column holds nothing but nulls and is not stored.
+        continue;
+      }
+
       Types.NestedField field = columns.get(fieldIndex);
-      FieldVector vector = root.getVector(fieldIndex);
+      FieldVector vector = root.getVector(vectorIndex[fieldIndex]);
 
       if (field.isOptional() && datum.isNullAt(fieldIndex)) {
         vector.setNull(rowIndex);
@@ -158,6 +178,11 @@ public class SparkVortexWriter implements VortexValueWriter<InternalRow> {
         InternalRow structRow = row.getStruct(fieldIndex, structFields.size());
         for (int i = 0; i < structFields.size(); i++) {
           Types.NestedField structField = structFields.get(i);
+          if (structField.type().typeId() == org.apache.iceberg.types.Type.TypeID.UNKNOWN) {
+            // Not stored, so the Arrow struct has no child to write it to.
+            continue;
+          }
+
           // Bind each Iceberg child to the Arrow child of the same name; the Arrow struct is built
           // from the write schema, so names line up even if ordinals were to drift.
           FieldVector childVector = (FieldVector) structVector.getChild(structField.name());
