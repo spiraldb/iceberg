@@ -407,6 +407,33 @@ public class TestVortexMetrics {
     assertThat(metrics.upperBounds()).isNull();
   }
 
+  @Test
+  void summaryMetricsForMapReportCountsWithoutBounds() throws Exception {
+    // Vortex only computes statistics for top-level columns, so a map column carries no bounds.
+    Schema schema =
+        new Schema(
+            optional(
+                1,
+                "props",
+                Types.MapType.ofOptional(2, 3, Types.StringType.get(), Types.IntegerType.get())));
+
+    Record first = GenericRecord.create(schema);
+    first.setField("props", ImmutableMap.of("a", 1, "b", 2));
+    Record second = GenericRecord.create(schema);
+    second.setField("props", null);
+
+    FileAppender<Record> appender = buildAppender(schema, "map.vortex");
+    appender.add(first);
+    appender.add(second);
+    appender.close();
+
+    Metrics metrics = appender.metrics();
+    assertThat(metrics.recordCount()).isEqualTo(2L);
+    assertThat(metrics.columnSizes()).containsKey(1);
+    assertThat(metrics.lowerBounds()).isNull();
+    assertThat(metrics.upperBounds()).isNull();
+  }
+
   private FileAppender<Record> buildAppender(Schema schema, String fileName) throws Exception {
     VortexFormatModel<Record, Void, VortexRowReader<?>> model =
         VortexFormatModel.create(
