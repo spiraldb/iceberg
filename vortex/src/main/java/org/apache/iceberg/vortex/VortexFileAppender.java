@@ -58,6 +58,9 @@ class VortexFileAppender<D> implements FileAppender<D> {
   private final org.apache.iceberg.Schema icebergSchema;
   private final MetricsConfig metricsConfig;
   private final long splitSize;
+  // Whether to take column bounds from the value writer instead of Vortex's native statistics,
+  // which report string bounds as a truncated prefix range.
+  private final boolean exactBoundsFromWriter;
 
   // Nominal per-row width used to size rows buffered before the first batch is handed to the
   // native writer, so rolling writers see a non-zero length as soon as rows are buffered.
@@ -83,7 +86,9 @@ class VortexFileAppender<D> implements FileAppender<D> {
       NativeWritable outputStream,
       org.apache.iceberg.Schema icebergSchema,
       MetricsConfig metricsConfig,
-      long splitSize) {
+      long splitSize,
+      boolean exactBoundsFromWriter) {
+    this.exactBoundsFromWriter = exactBoundsFromWriter;
     this.writer = writer;
     this.valueWriter = valueWriter;
     this.allocator = allocator != null ? allocator : VortexArrowBridge.arrowAllocator();
@@ -144,7 +149,12 @@ class VortexFileAppender<D> implements FileAppender<D> {
     Preconditions.checkState(closed, "Cannot return metrics while appending to an open file");
     Preconditions.checkState(summary != null, "Vortex writer did not produce a write summary");
     if (metrics == null) {
-      metrics = VortexMetrics.fromWriteSummary(icebergSchema, metricsConfig, summary);
+      metrics =
+          VortexMetrics.fromWriteSummary(
+              icebergSchema,
+              metricsConfig,
+              summary,
+              exactBoundsFromWriter ? valueWriter.metrics() : java.util.stream.Stream.empty());
     }
 
     return metrics;

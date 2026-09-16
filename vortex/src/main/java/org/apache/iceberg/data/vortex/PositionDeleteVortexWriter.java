@@ -19,12 +19,15 @@
 package org.apache.iceberg.data.vortex;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Comparator;
 import java.util.stream.Stream;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.iceberg.FieldMetrics;
+import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.deletes.PositionDelete;
+import org.apache.iceberg.types.Comparators;
 import org.apache.iceberg.vortex.VortexValueWriter;
 
 /**
@@ -33,18 +36,33 @@ import org.apache.iceberg.vortex.VortexValueWriter;
  * <p>The output schema is [file_path: string, pos: long].
  */
 public class PositionDeleteVortexWriter<D> implements VortexValueWriter<PositionDelete<D>> {
+  // Bounds on file_path are what mark a delete file as scoped to a single data file:
+  // ContentFileUtil.referencedDataFile infers that from an equal lower and upper bound, and the
+  // engine only rewrites deletes it can attribute to one data file. Without these the file reads
+  // as partition-scoped and its deletes are never superseded.
+  private final GenericVortexWriter.ColumnMetricsTracker<CharSequence> pathMetrics =
+      new GenericVortexWriter.ColumnMetricsTracker<>(
+          MetadataColumns.DELETE_FILE_PATH.fieldId(), Comparators.charSequences());
+  private final GenericVortexWriter.ColumnMetricsTracker<Long> posMetrics =
+      new GenericVortexWriter.ColumnMetricsTracker<>(
+          MetadataColumns.DELETE_FILE_POS.fieldId(), Comparator.<Long>naturalOrder());
+
   @Override
   public void write(PositionDelete<D> datum, VectorSchemaRoot root, int rowIndex) {
     VarCharVector pathVector = (VarCharVector) root.getVector(0);
-    byte[] pathBytes = datum.path().toString().getBytes(StandardCharsets.UTF_8);
-    pathVector.setSafe(rowIndex, pathBytes);
+    // Copied rather than referenced: callers reuse a single PositionDelete across rows, so the
+    // path this bound retains has to be independent of it.
+    String path = datum.path().toString();
+    pathVector.setSafe(rowIndex, path.getBytes(StandardCharsets.UTF_8));
+    pathMetrics.addValue(path);
 
     BigIntVector posVector = (BigIntVector) root.getVector(1);
     posVector.setSafe(rowIndex, datum.pos());
+    posMetrics.addValue(datum.pos());
   }
 
   @Override
   public Stream<FieldMetrics<?>> metrics() {
-    return Stream.empty();
+    return Stream.of(pathMetrics.toFieldMetrics(), posMetrics.toFieldMetrics());
   }
 }

@@ -61,6 +61,25 @@ final class VortexMetrics {
   @SuppressWarnings("checkstyle:CyclomaticComplexity")
   static Metrics fromWriteSummary(
       Schema schema, MetricsConfig metricsConfig, VortexWriteSummary summary) {
+    return fromWriteSummary(schema, metricsConfig, summary, Stream.empty());
+  }
+
+  /**
+   * Builds metrics from Vortex's native write summary, preferring bounds from {@code exactBounds}
+   * for the columns it covers.
+   *
+   * <p>Vortex truncates the string bounds it reports, widening them to a prefix range rather than
+   * the exact value. That is fine for pruning but loses information a caller may need exactly, so a
+   * writer that tracked a column itself can supply the precise bounds here.
+   */
+  @SuppressWarnings("checkstyle:CyclomaticComplexity")
+  static Metrics fromWriteSummary(
+      Schema schema,
+      MetricsConfig metricsConfig,
+      VortexWriteSummary summary,
+      Stream<FieldMetrics<?>> exactBounds) {
+    Map<Integer, FieldMetrics<?>> exactByFieldId = Maps.newHashMap();
+    exactBounds.forEach(fieldMetrics -> exactByFieldId.put(fieldMetrics.id(), fieldMetrics));
     // Vortex reports statistics per stored column, and unknown columns are not stored, so the
     // indexes it returns line up with the written columns rather than with schema.columns().
     List<Types.NestedField> columns = VortexSchemas.writtenFields(schema.columns());
@@ -101,11 +120,14 @@ final class VortexMetrics {
 
       int truncateLength = truncateLength(mode);
 
+      FieldMetrics<?> exact = exactByFieldId.get(id);
       Object lowerValue =
-          colStats
-              .lowerBound()
-              .map(bound -> toIcebergBound(type.asPrimitiveType(), bound))
-              .orElse(null);
+          exact != null && exact.hasBounds()
+              ? exact.lowerBound()
+              : colStats
+                  .lowerBound()
+                  .map(bound -> toIcebergBound(type.asPrimitiveType(), bound))
+                  .orElse(null);
       if (lowerValue != null) {
         Object truncated = truncateLowerBound(type, lowerValue, truncateLength);
         if (truncated != null) {
@@ -115,10 +137,12 @@ final class VortexMetrics {
       }
 
       Object upperValue =
-          colStats
-              .upperBound()
-              .map(bound -> toIcebergBound(type.asPrimitiveType(), bound))
-              .orElse(null);
+          exact != null && exact.hasBounds()
+              ? exact.upperBound()
+              : colStats
+                  .upperBound()
+                  .map(bound -> toIcebergBound(type.asPrimitiveType(), bound))
+                  .orElse(null);
       if (upperValue != null) {
         Object truncated = truncateUpperBound(type, upperValue, truncateLength);
         if (truncated != null) {

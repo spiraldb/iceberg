@@ -57,6 +57,7 @@ import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.types.Conversions;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.ContentFileUtil;
 import org.apache.iceberg.variants.Variant;
 import org.apache.iceberg.variants.VariantMetadata;
 import org.apache.iceberg.variants.Variants;
@@ -523,6 +524,33 @@ public class TestVortexMetrics {
             Conversions.<Long>fromByteBuffer(
                 Types.LongType.get(), metrics.upperBounds().get(positionId)))
         .isEqualTo(3L);
+  }
+
+  @Test
+  void positionDeleteFileIsFileScopedForLongPaths() throws Exception {
+    // Iceberg infers that a delete file covers a single data file from an equal lower and upper
+    // bound on file_path, and only rewrites deletes it can attribute to one data file. Vortex's
+    // native string statistics report a truncated prefix range, so a realistic path would compare
+    // unequal and the delete file would read as partition scoped.
+    String longPath =
+        "/warehouse/default/table/data/00000-0-abcdef01-2345-6789-abcd-ef0123456789-00001.parquet";
+    assertThat(longPath.length()).isGreaterThan(64);
+
+    OutputFile outputFile = Files.localOutput(temp.resolve("long-path-deletes.vortex").toFile());
+    PositionDeleteWriter<Void> writer =
+        FormatModelRegistry.<Void>positionDeleteWriteBuilder(
+                FileFormat.VORTEX, EncryptedFiles.plainAsEncryptedOutput(outputFile))
+            .metricsConfig(MetricsConfig.forPositionDelete())
+            .spec(PartitionSpec.unpartitioned())
+            .build();
+    PositionDelete<Void> delete = PositionDelete.create();
+    writer.write(delete.set(longPath, 1L, null));
+    writer.write(delete.set(longPath, 3L, null));
+    writer.close();
+
+    DeleteFile deleteFile = writer.toDeleteFile();
+    assertThat(ContentFileUtil.referencedDataFile(deleteFile)).hasToString(longPath);
+    assertThat(ContentFileUtil.isFileScoped(deleteFile)).isTrue();
   }
 
   @Test

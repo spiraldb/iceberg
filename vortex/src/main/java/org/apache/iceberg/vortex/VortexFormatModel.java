@@ -246,7 +246,7 @@ public class VortexFormatModel<D, S, R>
       Schema arrowSchema = VortexSchemas.toArrowSchema(writeSchema);
       VortexValueWriter<D> valueWriter =
           (VortexValueWriter<D>) writerFunction.write(writeSchema, arrowSchema, engineSchema);
-      return newAppender(writeSchema, arrowSchema, valueWriter);
+      return newAppender(writeSchema, arrowSchema, valueWriter, false);
     }
 
     @SuppressWarnings("unchecked")
@@ -254,11 +254,18 @@ public class VortexFormatModel<D, S, R>
       org.apache.iceberg.Schema posDeleteSchema = DeleteSchemaUtil.pathPosSchema();
       Schema arrowSchema = VortexSchemas.toArrowSchema(posDeleteSchema);
       VortexValueWriter<D> valueWriter = (VortexValueWriter<D>) new PositionDeleteVortexWriter<>();
-      return newAppender(posDeleteSchema, arrowSchema, valueWriter);
+      // Iceberg reads a delete file as scoped to one data file when file_path has an equal lower
+      // and upper bound, and only rewrites deletes it can attribute to a single data file. Vortex's
+      // native string bounds are a truncated prefix range, so any path longer than the truncation
+      // limit would never compare equal; the writer tracks the exact values instead.
+      return newAppender(posDeleteSchema, arrowSchema, valueWriter, true);
     }
 
     private FileAppender<D> newAppender(
-        org.apache.iceberg.Schema writeSchema, Schema arrowSchema, VortexValueWriter<D> valueWriter)
+        org.apache.iceberg.Schema writeSchema,
+        Schema arrowSchema,
+        VortexValueWriter<D> valueWriter,
+        boolean exactBoundsFromWriter)
         throws IOException {
       dev.vortex.relocated.org.apache.arrow.vector.types.pojo.Schema vortexSchema =
           VortexSchemas.toVortexArrowSchema(writeSchema);
@@ -302,7 +309,8 @@ public class VortexFormatModel<D, S, R>
           outputStream,
           writeSchema,
           metricsConfig,
-          splitSize);
+          splitSize,
+          exactBoundsFromWriter);
     }
   }
 
