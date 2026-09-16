@@ -18,11 +18,52 @@
 #
 
 name: "Flink CI"
-# Flink is not part of this fork's Vortex work: the Flink modules have no Vortex
-# support, so these tests are not run automatically. Trigger the workflow manually
-# to run them.
 on:
-  workflow_dispatch:
+  push:
+    branches:
+    - 'main'
+    - '0.*'
+    - '1.*'
+    - '2.*'
+    tags:
+    - 'apache-iceberg-**'
+  pull_request:
+    paths-ignore:
+    - '.github/ISSUE_TEMPLATE/**'
+    - '.github/workflows/api-binary-compatibility.yml'
+    - '.github/workflows/delta-conversion-ci.yml'
+    - '.github/workflows/docs-ci.yml'
+    - '.github/workflows/hive-ci.yml'
+    - '.github/workflows/java-ci.yml'
+    - '.github/workflows/jmh-benchmarks-ci.yml'
+    - '.github/workflows/kafka-connect-ci.yml'
+    - '.github/workflows/cve-scan.yml'
+    - '.github/workflows/labeler.yml'
+    - '.github/workflows/license-check.yml'
+    - '.github/workflows/open-api.yml'
+    - '.github/workflows/pr-title-check.yml'
+    - '.github/workflows/publish-snapshot.yml'
+    - '.github/workflows/recurring-jmh-benchmarks.yml'
+    - '.github/workflows/site-ci.yml'
+    - '.github/workflows/spark-ci.yml'
+    - '.github/workflows/stale.yml'
+    - '.gitignore'
+    - '.asf.yaml'
+    - 'dev/**'
+    - 'docker/**'
+    - 'mr/**'
+    - 'kafka-connect/**'
+    - 'spark/**'
+    - 'docs/**'
+    - 'site/**'
+    - 'open-api/**'
+    - 'format/**'
+    - '.gitattributes'
+    - '**/README.md'
+    - 'CONTRIBUTING.md'
+    - '**/LICENSE'
+    - '**/NOTICE'
+    - 'doap.rdf'
 
 permissions:
   contents: read
