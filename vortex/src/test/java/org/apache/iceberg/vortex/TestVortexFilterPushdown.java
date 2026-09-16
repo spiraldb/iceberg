@@ -139,18 +139,19 @@ public class TestVortexFilterPushdown {
   }
 
   @Test
-  public void testLargeInSetFallsBackToItsBoundingRange() throws IOException {
-    // Beyond the expansion limit an IN set is approximated by the range it spans, so rows inside
-    // the range that are not in the set may come back, but every matching row must.
+  public void testLargeInSetIsNotPushedDown() throws IOException {
+    // Expanding a set this large costs more than the scan it saves, so the predicate is dropped
+    // and the engine applies it. The scan returns a superset; every matching row must survive.
+    // The values are distinct so the set really exceeds the expansion limit, and only 2 and 6
+    // fall in the file's id range.
     Long[] values = new Long[300];
-    for (int i = 0; i < values.length; i++) {
-      values[i] = i % 2 == 0 ? 2L : 6L;
+    values[0] = 2L;
+    values[1] = 6L;
+    for (int i = 2; i < values.length; i++) {
+      values[i] = (long) (100 + i);
     }
 
-    List<Long> scanned = scan(Expressions.in("id", (Object[]) values));
-    assertThat(scanned).contains(2L, 6L);
-    // The bounding range [2, 6] must still exclude everything outside it.
-    assertThat(scanned).doesNotContain(1L, 7L, 8L);
+    assertPushdown(Expressions.in("id", (Object[]) values), List.of(2L, 6L), false);
   }
 
   @Test
