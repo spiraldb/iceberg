@@ -20,6 +20,7 @@ package org.apache.iceberg.spark.data.vectorized;
 
 import java.util.List;
 import org.apache.arrow.memory.ArrowBuf;
+import org.apache.arrow.vector.BaseIntVector;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
@@ -199,7 +200,10 @@ class VortexArrowColumnVector extends ColumnVector {
 
   @SuppressWarnings("checkstyle:CyclomaticComplexity")
   private void initAccessor(ValueVector vector, Field fileField, Type expectedType) {
-    if (vector instanceof BitVector bitVector) {
+    ArrowVectorAccessor promoted = promotedAccessor(vector, expectedType);
+    if (promoted != null) {
+      accessor = promoted;
+    } else if (vector instanceof BitVector bitVector) {
       accessor = new BooleanAccessor(bitVector);
     } else if (vector instanceof TinyIntVector tinyIntVector) {
       accessor = new ByteAccessor(tinyIntVector);
@@ -254,6 +258,63 @@ class VortexArrowColumnVector extends ColumnVector {
   }
 
   /**
+   * Returns an accessor for a column the projection reads at a wider type than the file stores it
+   * at, or null when no promotion applies.
+   *
+   * <p>Iceberg allows a column's type to widen after it was written, so a file can hold ints for a
+   * column the projection now reads as longs. Spark asks this vector for the projected type, so the
+   * narrower vector has to answer the wider getter.
+   */
+  private static ArrowVectorAccessor promotedAccessor(ValueVector vector, Type expectedType) {
+    if (expectedType == null || !expectedType.isPrimitiveType()) {
+      return null;
+    }
+
+    return switch (expectedType.typeId()) {
+      case LONG -> vector instanceof BigIntVector ? null : intAsLongAccessor(vector);
+      case DOUBLE ->
+          vector instanceof Float4Vector floatVector
+              ? new FloatAsDoubleAccessor(floatVector)
+              : null;
+      default -> null;
+    };
+  }
+
+  private static ArrowVectorAccessor intAsLongAccessor(ValueVector vector) {
+    return vector instanceof BaseIntVector intVector ? new IntAsLongAccessor(intVector) : null;
+  }
+
+  /** Reads a narrower integer column as longs, for an int column promoted to long. */
+  private static final class IntAsLongAccessor extends ArrowVectorAccessor {
+    private final BaseIntVector accessor;
+
+    IntAsLongAccessor(BaseIntVector vector) {
+      super((ValueVector) vector);
+      this.accessor = vector;
+    }
+
+    @Override
+    long getLong(int rowId) {
+      return accessor.getValueAsLong(rowId);
+    }
+  }
+
+  /** Reads a float column as doubles, for a float column promoted to double. */
+  private static final class FloatAsDoubleAccessor extends ArrowVectorAccessor {
+    private final long dataAddress;
+
+    FloatAsDoubleAccessor(Float4Vector vector) {
+      super(vector);
+      this.dataAddress = vector.getDataBuffer().memoryAddress();
+    }
+
+    @Override
+    double getDouble(int rowId) {
+      return Platform.getFloat(null, dataAddress + ((long) rowId << 2));
+    }
+  }
+
+  /**
    * Builds the child vectors of a struct in projection order.
    *
    * <p>Arrow children follow the order the struct was written in, which is not the projected order
@@ -304,8 +365,18 @@ class VortexArrowColumnVector extends ColumnVector {
    * projection order to match {@link #structChildren}; everything else follows the file.
    */
   private static DataType sparkType(Field fileField, Type expectedType) {
-    if (expectedType == null || !expectedType.isNestedType()) {
+    if (expectedType == null) {
       return fromArrowField(fileField);
+    }
+
+    if (!expectedType.isNestedType()) {
+      // A promoted column is stored narrower than it is read, so the Arrow field describes the
+      // file's type rather than the one Spark asks this vector for.
+      return switch (expectedType.typeId()) {
+        case LONG -> DataTypes.LongType;
+        case DOUBLE -> DataTypes.DoubleType;
+        default -> fromArrowField(fileField);
+      };
     }
 
     if (expectedType.isStructType()) {
