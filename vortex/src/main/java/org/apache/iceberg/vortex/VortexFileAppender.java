@@ -34,6 +34,7 @@ import org.apache.iceberg.MetricsConfig;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 
 /**
  * A {@link FileAppender} that writes data to Vortex files via the Arrow C-data interface.
@@ -58,9 +59,9 @@ class VortexFileAppender<D> implements FileAppender<D> {
   private final org.apache.iceberg.Schema icebergSchema;
   private final MetricsConfig metricsConfig;
   private final long splitSize;
-  // Whether to take column bounds from the value writer instead of Vortex's native statistics,
-  // which report string bounds as a truncated prefix range.
-  private final boolean exactBoundsFromWriter;
+  // Set when the value writer tracked columns whose Vortex statistics are too coarse to use as
+  // written; null otherwise. See VortexExactBounds.
+  private final VortexExactBounds exactBounds;
 
   // Nominal per-row width used to size rows buffered before the first batch is handed to the
   // native writer, so rolling writers see a non-zero length as soon as rows are buffered.
@@ -86,9 +87,8 @@ class VortexFileAppender<D> implements FileAppender<D> {
       NativeWritable outputStream,
       org.apache.iceberg.Schema icebergSchema,
       MetricsConfig metricsConfig,
-      long splitSize,
-      boolean exactBoundsFromWriter) {
-    this.exactBoundsFromWriter = exactBoundsFromWriter;
+      long splitSize) {
+    this.exactBounds = valueWriter instanceof VortexExactBounds bounds ? bounds : null;
     this.writer = writer;
     this.valueWriter = valueWriter;
     this.allocator = allocator != null ? allocator : VortexArrowBridge.arrowAllocator();
@@ -154,7 +154,7 @@ class VortexFileAppender<D> implements FileAppender<D> {
               icebergSchema,
               metricsConfig,
               summary,
-              exactBoundsFromWriter ? valueWriter.metrics() : java.util.stream.Stream.empty());
+              exactBounds == null ? ImmutableMap.of() : exactBounds.exactBounds());
     }
 
     return metrics;

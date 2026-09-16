@@ -18,22 +18,22 @@
  */
 package org.apache.iceberg.vortex;
 
-import org.apache.arrow.vector.VectorSchemaRoot;
+import java.util.Map;
+import org.apache.iceberg.util.Pair;
 
 /**
- * Interface for writing a datum of type {@code D} into Arrow vectors for Vortex file output.
+ * A value writer that tracks exact bounds for columns whose Vortex statistics are too coarse to use
+ * as written.
  *
- * <p>Implementations are engine-specific: the generic data path writes {@code Record} objects,
- * while Spark writes {@code InternalRow} objects.
- *
- * @param <D> the type of data to write
+ * <p>Vortex reports a string column's bounds as a truncated prefix range, which is fine for pruning
+ * but loses any information a caller needs exactly. Iceberg recognizes a position delete file as
+ * covering a single data file only when {@code file_path}'s lower and upper bounds are equal, so a
+ * writer that needs that has to track the column as it writes and report it here.
  */
-public interface VortexValueWriter<D> {
+public interface VortexExactBounds {
   /**
-   * Write a single datum into the Arrow {@link VectorSchemaRoot} at the given row index.
-   *
-   * <p>The caller manages the {@link VectorSchemaRoot} lifecycle and ensures vectors have been
-   * allocated with sufficient capacity.
+   * Exact lower and upper bounds, keyed by Iceberg field id, for the columns this writer tracked.
+   * Columns absent from the map keep the bounds Vortex reported.
    */
-  void write(D datum, VectorSchemaRoot root, int rowIndex);
+  Map<Integer, Pair<Object, Object>> exactBounds();
 }
