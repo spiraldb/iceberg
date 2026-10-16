@@ -93,6 +93,8 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
     ReadBuilder<ColumnarBatch, ?> readBuilder =
         FormatModelRegistry.readBuilder(format, ColumnarBatch.class, inputFile);
 
+    configureRead(format, readBuilder);
+
     if (parquetConf != null) {
       readBuilder = readBuilder.recordsPerBatch(parquetConf.batchSize());
     } else if (orcConf != null) {
@@ -289,6 +291,7 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
 
     ReadBuilder<InternalRow, ?> rowReadBuilder =
         FormatModelRegistry.readBuilder(FileFormat.VORTEX, InternalRow.class, inputFile);
+    configureRead(FileFormat.VORTEX, rowReadBuilder);
     try (CloseableIterable<InternalRow> rows =
             rowReadBuilder
                 .project(scanSchema)

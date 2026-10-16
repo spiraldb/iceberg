@@ -59,9 +59,14 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
 
   private final Schema fileSchema;
   private final boolean caseSensitive;
+  private final Schema bindingSchema;
+  private final boolean ignoreMissingFields;
 
-  private ConvertFilterToVortex(Schema fileSchema, boolean caseSensitive) {
+  private ConvertFilterToVortex(
+      Schema fileSchema, Schema bindingSchema, boolean caseSensitive, boolean ignoreMissingFields) {
     this.fileSchema = fileSchema;
+    this.bindingSchema = bindingSchema;
+    this.ignoreMissingFields = ignoreMissingFields;
     this.caseSensitive = caseSensitive;
   }
 
@@ -71,9 +76,29 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
 
   public static Expression convert(
       Schema schema, org.apache.iceberg.expressions.Expression expr, boolean caseSensitive) {
+    return convert(schema, schema, expr, caseSensitive, false);
+  }
+
+  static Expression convert(
+      Schema fileSchema,
+      Schema bindingSchema,
+      org.apache.iceberg.expressions.Expression expr,
+      boolean caseSensitive) {
+    return convert(fileSchema, bindingSchema, expr, caseSensitive, true);
+  }
+
+  private static Expression convert(
+      Schema fileSchema,
+      Schema bindingSchema,
+      org.apache.iceberg.expressions.Expression expr,
+      boolean caseSensitive,
+      boolean ignoreMissingFields) {
     org.apache.iceberg.expressions.Expression pushedNot = Expressions.rewriteNot(expr);
     Expression converted =
-        ExpressionVisitors.visit(pushedNot, new ConvertFilterToVortex(schema, caseSensitive));
+        ExpressionVisitors.visit(
+            pushedNot,
+            new ConvertFilterToVortex(
+                fileSchema, bindingSchema, caseSensitive, ignoreMissingFields));
     if (converted == UNCONVERTIBLE) {
       return ALWAYS_TRUE;
     } else {
@@ -134,6 +159,13 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
       return UNCONVERTIBLE;
     }
 
+    // Literals bind to the projected schema, but native columns retain their physical type.
+    // Promoted fields require engine residual evaluation; narrowing literals is not always safe.
+    Types.NestedField physicalField = fileSchema.findField(term.fieldId());
+    if (physicalField == null || !physicalField.type().equals(term.type())) {
+      return UNCONVERTIBLE;
+    }
+
     Expression vortexTerm = column(term.fieldId());
     if (vortexTerm == UNCONVERTIBLE) {
       return UNCONVERTIBLE;
@@ -168,6 +200,13 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
 
   @Override
   public <T> Expression predicate(UnboundPredicate<T> pred) {
+    if (ignoreMissingFields
+        && (caseSensitive
+                ? bindingSchema.findField(pred.ref().name())
+                : bindingSchema.caseInsensitiveFindField(pred.ref().name()))
+            == null) {
+      return UNCONVERTIBLE;
+    }
     org.apache.iceberg.expressions.Expression bound = bind(pred);
     if (bound instanceof BoundPredicate) {
       return predicate((BoundPredicate<?>) bound);
@@ -180,7 +219,7 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
   }
 
   private org.apache.iceberg.expressions.Expression bind(UnboundPredicate<?> pred) {
-    return pred.bind(fileSchema.asStruct(), caseSensitive);
+    return pred.bind(bindingSchema.asStruct(), caseSensitive);
   }
 
   private Expression column(int fieldId) {

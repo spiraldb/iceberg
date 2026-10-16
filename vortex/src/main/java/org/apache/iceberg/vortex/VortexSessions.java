@@ -19,6 +19,8 @@
 package org.apache.iceberg.vortex;
 
 import dev.vortex.api.Session;
+import dev.vortex.jni.NativeRuntime;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 
 /**
  * Provides the process-wide shared Vortex {@link Session}.
@@ -30,7 +32,18 @@ import dev.vortex.api.Session;
  */
 public final class VortexSessions {
 
+  private static int workerThreads = -1;
+
   private VortexSessions() {}
+
+  static synchronized void configureWorkerThreads(int requested) {
+    Preconditions.checkArgument(requested >= 0, "Invalid Vortex worker threads: %s", requested);
+    // Zero disables background workers; a later table must not shrink an active pool.
+    if (workerThreads < 0 || requested > workerThreads) {
+      NativeRuntime.setWorkerThreads(requested);
+      workerThreads = requested;
+    }
+  }
 
   private static final class Holder {
     private static final Session SHARED = Session.create();

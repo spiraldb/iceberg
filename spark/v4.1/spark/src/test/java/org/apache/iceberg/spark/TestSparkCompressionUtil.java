@@ -54,6 +54,14 @@ public class TestSparkCompressionUtil {
   }
 
   @Test
+  void vortexUsesColumnarCompressionRatio() {
+    configureShuffle("lz4", true);
+    assertThat(shuffleCompressionRatio(FileFormat.VORTEX, "zstd"))
+        .isEqualTo(shuffleCompressionRatio(PARQUET, "zstd"))
+        .isGreaterThan(1.0);
+  }
+
+  @Test
   public void testParquetCompressionRatios() {
     configureShuffle("lz4", true);
 

@@ -26,7 +26,6 @@ import dev.vortex.api.ScanOptions;
 import dev.vortex.api.Session;
 import dev.vortex.io.NativeReadable;
 import dev.vortex.jni.NativeFiles;
-import dev.vortex.jni.NativeRuntime;
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -59,6 +58,9 @@ import org.slf4j.LoggerFactory;
 
 public class VortexIterable<T> extends CloseableGroup implements CloseableIterable<T> {
   private static final Logger LOG = LoggerFactory.getLogger(VortexIterable.class);
+  private static final int NAME_MAPPING_CACHE_SIZE = 10_000;
+  private static final VortexNameMappings NAME_MAPPINGS =
+      new VortexNameMappings(NAME_MAPPING_CACHE_SIZE);
 
   private final InputFile inputFile;
   private final Optional<Expression> filterPredicate;
@@ -114,7 +116,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
     // Apply the worker-thread setting on this executor JVM before any Vortex native work
     // begins for this read.
-    NativeRuntime.setWorkerThreads(workerThreads);
+    VortexSessions.configureWorkerThreads(workerThreads);
 
     Session session = VortexSessions.shared();
     // Read through the table's FileIO instead of Vortex's native storage clients. The returned
@@ -162,19 +164,13 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     // A file whose writer stored a name mapping in Vortex file metadata carries field ids: tag the
     // Arrow fields with them so readers bind columns by id. A file that stores none falls back to
     // the table's name mapping; without either, binding falls back to by name.
-    NameMapping fileMapping = readNameMapping(session, readable);
+    NameMapping fileMapping = cachedNameMapping(session, readable);
     NameMapping mapping = fileMapping != null ? fileMapping : nameMapping;
     if (mapping != null) {
       fileArrowSchema = VortexSchemas.withFieldIds(fileArrowSchema, mapping);
     }
 
-    Optional<dev.vortex.api.Expression> scanFilter =
-        filterPredicate.map(
-            icebergExpression -> {
-              Schema icebergFileSchema = VortexSchemas.convert(vortexArrowSchema);
-              return ConvertFilterToVortex.convert(
-                  icebergFileSchema, icebergExpression, caseSensitive);
-            });
+    Optional<dev.vortex.api.Expression> scanFilter = scanFilter(fileArrowSchema, mapping != null);
 
     // Vortex resolves projected columns by name and errors on any name not in the file. Each
     // expected column is bound to the file column with the same Iceberg id (so a column renamed
@@ -249,6 +245,39 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     }
   }
 
+  private NameMapping cachedNameMapping(Session session, NativeReadable readable) {
+    try {
+      return NAME_MAPPINGS.get(
+          inputFile.location(), inputFile.getLength(), () -> readNameMapping(session, readable));
+    } catch (RuntimeException e) {
+      LOG.warn("Failed to read Vortex file metadata for {}", inputFile.location(), e);
+      return null;
+    }
+  }
+
+  private Optional<dev.vortex.api.Expression> scanFilter(
+      org.apache.arrow.vector.types.pojo.Schema fileSchema, boolean hasMapping) {
+    return filterPredicate.map(
+        expression -> {
+          // Variant values have no supported pruning predicates. Exclude their containing columns
+          // from the pruning schema while keeping them in the projection schema.
+          org.apache.arrow.vector.types.pojo.Schema pruningSchema =
+              new org.apache.arrow.vector.types.pojo.Schema(
+                  fileSchema.getFields().stream()
+                      .filter(field -> !containsVariant(field))
+                      .toList());
+          Schema icebergFileSchema = VortexSchemas.convert(pruningSchema);
+          Schema bindingSchema = hasMapping ? new Schema(projection) : icebergFileSchema;
+          return ConvertFilterToVortex.convert(
+              icebergFileSchema, bindingSchema, expression, caseSensitive);
+        });
+  }
+
+  private static boolean containsVariant(Field field) {
+    return VortexSchemas.isVariantField(field)
+        || field.getChildren().stream().anyMatch(VortexIterable::containsVariant);
+  }
+
   private void addColumnProjections(
       org.apache.arrow.vector.types.pojo.Schema fileArrowSchema,
       ImmutableList.Builder<String> fieldNames,
@@ -269,13 +298,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
    * entry will not parse: both fall back to binding by name rather than failing the scan.
    */
   private NameMapping readNameMapping(Session session, NativeReadable readable) {
-    byte[] json;
-    try {
-      json = NativeFiles.readMetadata(session, readable).get(VortexSchemas.NAME_MAPPING_KEY);
-    } catch (RuntimeException e) {
-      LOG.warn("Failed to read Vortex file metadata for {}", inputFile.location(), e);
-      return null;
-    }
+    byte[] json = NativeFiles.readMetadata(session, readable).get(VortexSchemas.NAME_MAPPING_KEY);
 
     if (json == null) {
       return null;

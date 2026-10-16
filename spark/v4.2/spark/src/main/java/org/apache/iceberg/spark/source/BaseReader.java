@@ -31,6 +31,7 @@ import java.util.stream.Stream;
 import org.apache.iceberg.ContentFile;
 import org.apache.iceberg.ContentScanTask;
 import org.apache.iceberg.DeleteFile;
+import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.Partitioning;
 import org.apache.iceberg.ScanTask;
@@ -44,6 +45,7 @@ import org.apache.iceberg.data.DeleteFilter;
 import org.apache.iceberg.data.DeleteLoader;
 import org.apache.iceberg.deletes.DeleteCounter;
 import org.apache.iceberg.encryption.EncryptingFileIO;
+import org.apache.iceberg.formats.ReadBuilder;
 import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.InputFile;
@@ -122,6 +124,16 @@ abstract class BaseReader<T, TaskT extends ScanTask> implements Closeable {
 
   protected NameMapping nameMapping() {
     return nameMapping;
+  }
+
+  /** Passes table-level read settings that the format's read builder does not see otherwise. */
+  protected void configureRead(FileFormat format, ReadBuilder<?, ?> builder) {
+    if (format == FileFormat.VORTEX) {
+      String workerThreads = table.properties().get(TableProperties.READ_VORTEX_WORKER_THREADS);
+      if (workerThreads != null) {
+        builder.set(TableProperties.READ_VORTEX_WORKER_THREADS, workerThreads);
+      }
+    }
   }
 
   protected Table table() {

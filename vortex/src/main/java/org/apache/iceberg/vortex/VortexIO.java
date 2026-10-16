@@ -23,9 +23,14 @@ import dev.vortex.io.NativeWritable;
 import java.io.EOFException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import org.apache.arrow.memory.util.MemoryUtil;
+import org.apache.iceberg.io.FileRange;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.io.PositionOutputStream;
@@ -58,6 +63,21 @@ final class VortexIO {
    */
   static NativeReadable readable(InputFile inputFile) {
     return new InputFileReadable(inputFile);
+  }
+
+  /**
+   * Returns whether the remaining bytes of both buffers start at the same memory address, as when
+   * one buffer is a slice or duplicate of the other.
+   */
+  static boolean sameStartAddress(ByteBuffer left, ByteBuffer right) {
+    if (left.isDirect() && right.isDirect()) {
+      return MemoryUtil.getByteBufferAddress(left) + left.position()
+          == MemoryUtil.getByteBufferAddress(right) + right.position();
+    } else if (left.hasArray() && right.hasArray()) {
+      return left.array() == right.array()
+          && left.arrayOffset() + left.position() == right.arrayOffset() + right.position();
+    }
+    return false;
   }
 
   private static final class OutputFileWritable implements NativeWritable {
@@ -111,7 +131,7 @@ final class VortexIO {
     @Override
     public void readFully(long position, ByteBuffer buffer) throws IOException {
       Preconditions.checkState(!closed, "Cannot read: already closed");
-      if (position + buffer.remaining() > length) {
+      if (position < 0 || position > length || buffer.remaining() > length - position) {
         throw new EOFException(
             String.format(
                 Locale.ROOT,
@@ -147,16 +167,43 @@ final class VortexIO {
 
     private void copy(SeekableInputStream stream, long position, ByteBuffer buffer)
         throws IOException {
-      byte[] chunk = new byte[Math.min(buffer.remaining(), COPY_CHUNK_SIZE)];
+      if (!buffer.hasRemaining()) {
+        return;
+      }
       if (stream instanceof RangeReadable range) {
-        long pos = position;
-        while (buffer.hasRemaining()) {
-          int len = Math.min(chunk.length, buffer.remaining());
-          range.readFully(pos, chunk, 0, len);
-          buffer.put(chunk, 0, len);
-          pos += len;
+        ByteBuffer target = buffer.slice();
+        FileRange request = new FileRange(new CompletableFuture<>(), position, target.remaining());
+        try {
+          range.readVectored(
+              List.of(request),
+              size -> {
+                Preconditions.checkArgument(
+                    size == target.remaining(), "Unexpected range size: %s", size);
+                return target.isDirect() ? target : ByteBuffer.allocate(size);
+              });
+        } catch (UnsupportedOperationException e) {
+          // RangeReadable's default implementation requires an array-backed allocation.
+          byte[] bytes = new byte[buffer.remaining()];
+          range.readFully(position, bytes);
+          buffer.put(bytes);
+          return;
+        }
+        try {
+          ByteBuffer result = request.byteBuffer().join();
+          Preconditions.checkArgument(
+              result.remaining() == buffer.remaining(), "Incomplete range read");
+          // Readers may return the allocated buffer or a view of it (such as a slice); either way
+          // the bytes are already in place, so only copy results held in other memory.
+          if (!sameStartAddress(result, target)) {
+            buffer.put(result);
+          } else {
+            buffer.position(buffer.limit());
+          }
+        } catch (CompletionException e) {
+          throw new IOException("Failed to read " + inputFile.location(), e.getCause());
         }
       } else {
+        byte[] chunk = new byte[Math.min(buffer.remaining(), COPY_CHUNK_SIZE)];
         stream.seek(position);
         while (buffer.hasRemaining()) {
           int read = stream.read(chunk, 0, Math.min(chunk.length, buffer.remaining()));

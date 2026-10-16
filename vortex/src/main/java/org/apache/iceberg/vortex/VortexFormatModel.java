@@ -21,7 +21,6 @@ package org.apache.iceberg.vortex;
 import dev.vortex.api.Session;
 import dev.vortex.api.VortexWriter;
 import dev.vortex.io.NativeWritable;
-import dev.vortex.jni.NativeRuntime;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -271,7 +270,7 @@ public class VortexFormatModel<D, S, R>
           VortexSchemas.toVortexArrowSchema(writeSchema);
 
       // Apply worker-thread setting on this executor JVM before any Vortex native work begins.
-      NativeRuntime.setWorkerThreads(workerThreads);
+      VortexSessions.configureWorkerThreads(workerThreads);
       BufferAllocator allocator = VortexArrowBridge.arrowAllocator();
       dev.vortex.relocated.org.apache.arrow.memory.BufferAllocator vortexAllocator =
           VortexArrowBridge.vortexAllocator();

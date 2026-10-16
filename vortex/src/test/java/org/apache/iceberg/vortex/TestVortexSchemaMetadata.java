@@ -28,10 +28,12 @@ import dev.vortex.io.NativeReadable;
 import dev.vortex.io.NativeWritable;
 import dev.vortex.jni.NativeFiles;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 import org.apache.iceberg.FileContent;
 import org.apache.iceberg.Files;
 import org.apache.iceberg.Schema;
@@ -40,6 +42,9 @@ import org.apache.iceberg.data.Record;
 import org.apache.iceberg.data.vortex.GenericVortexReader;
 import org.apache.iceberg.data.vortex.GenericVortexWriter;
 import org.apache.iceberg.encryption.EncryptedFiles;
+import org.apache.iceberg.expressions.Evaluator;
+import org.apache.iceberg.expressions.Expression;
+import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.io.InputFile;
@@ -49,10 +54,14 @@ import org.apache.iceberg.mapping.MappingUtil;
 import org.apache.iceberg.mapping.NameMapping;
 import org.apache.iceberg.mapping.NameMappingParser;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Covers the name mapping Vortex files carry in their file metadata, and the id-based column
@@ -234,6 +243,102 @@ public class TestVortexSchemaMetadata {
     assertThat(read.getField("data")).isEqualTo("a");
   }
 
+  @Test
+  void filtersRenamedColumnById() throws IOException {
+    InputFile file = write(SCHEMA, record(SCHEMA));
+    Schema renamed = new Schema(optional(2, "payload", Types.StringType.get()));
+    try (CloseableIterable<Record> rows =
+        formatModel()
+            .readBuilder(file)
+            .project(renamed)
+            .filter(Expressions.equal("payload", "a"))
+            .build()) {
+      assertThat(Lists.newArrayList(rows)).hasSize(1);
+    }
+  }
+
+  @Test
+  void filterOnReusedNameDoesNotReadOldColumn() throws IOException {
+    InputFile file = write(SCHEMA, record(SCHEMA));
+    Schema evolved = new Schema(optional(11, "data", Types.StringType.get()));
+    try (CloseableIterable<Record> rows =
+        formatModel()
+            .readBuilder(file)
+            .project(evolved)
+            .filter(Expressions.isNull("data"))
+            .build()) {
+      assertThat(Lists.newArrayList(rows)).hasSize(1);
+    }
+  }
+
+  static Stream<Arguments> promotions() {
+    return Stream.of(
+        Arguments.of(Types.IntegerType.get(), Types.LongType.get(), 5, 7),
+        Arguments.of(Types.FloatType.get(), Types.DoubleType.get(), 5F, 7F),
+        Arguments.of(
+            Types.DecimalType.of(5, 2),
+            Types.DecimalType.of(12, 2),
+            new BigDecimal("5.00"),
+            new BigDecimal("7.00")));
+  }
+
+  @ParameterizedTest
+  @MethodSource("promotions")
+  void promotedFiltersUseResiduals(Type physical, Type promoted, Object five, Object seven)
+      throws IOException {
+    Schema written =
+        new Schema(optional(1, "old", physical), optional(2, "stable", Types.IntegerType.get()));
+    Schema projected =
+        new Schema(optional(1, "value", promoted), optional(2, "stable", Types.IntegerType.get()));
+    Record first = GenericRecord.create(written);
+    first.setField("old", five);
+    first.setField("stable", 9);
+    Record second = GenericRecord.create(written);
+    second.setField("old", seven);
+    second.setField("stable", 9);
+    InputFile file = write(written, first, second);
+    List<Expression> filters =
+        List.of(
+            Expressions.equal("value", 5),
+            Expressions.greaterThan("value", 6),
+            Expressions.in("value", 5, 6),
+            Expressions.greaterThan("value", 2147483648L),
+            Expressions.or(Expressions.equal("value", 5), Expressions.equal("stable", 9)),
+            Expressions.and(Expressions.equal("value", 5), Expressions.equal("stable", 9)));
+    List<Integer> counts = List.of(1, 1, 1, 0, 2, 1);
+    for (int index = 0; index < filters.size(); index++) {
+      Expression filter = filters.get(index);
+      Evaluator residual = new Evaluator(projected.asStruct(), filter, true);
+      try (CloseableIterable<Record> rows =
+          formatModel().readBuilder(file).project(projected).filter(filter).build()) {
+        assertThat(Lists.newArrayList(rows).stream().filter(residual::eval).count())
+            .isEqualTo(counts.get(index).longValue());
+      }
+    }
+  }
+
+  @Test
+  void nestedRenameAndPromotionUsesResidual() throws IOException {
+    Schema written =
+        new Schema(optional(1, "s", StructType.of(optional(2, "old", Types.IntegerType.get()))));
+    Schema projected =
+        new Schema(optional(1, "s", StructType.of(optional(2, "renamed", Types.LongType.get()))));
+    Record nested = GenericRecord.create(written.findType("s").asStructType());
+    nested.setField("old", 5);
+    Record row = GenericRecord.create(written);
+    row.setField("s", nested);
+    Expression filter = Expressions.equal("s.renamed", 5L);
+    try (CloseableIterable<Record> rows =
+        formatModel().readBuilder(write(written, row)).project(projected).filter(filter).build()) {
+      assertThat(Lists.newArrayList(rows))
+          .singleElement()
+          .satisfies(
+              result ->
+                  assertThat(new Evaluator(projected.asStruct(), filter, true).eval(result))
+                      .isTrue());
+    }
+  }
+
   private static Record record(Schema schema) {
     Record location = GenericRecord.create(schema.findType("location").asStructType());
     location.setField("lat", 1.0d);
@@ -248,7 +353,7 @@ public class TestVortexSchemaMetadata {
     return record;
   }
 
-  private InputFile write(Schema schema, Record record) throws IOException {
+  private InputFile write(Schema schema, Record... records) throws IOException {
     OutputFile outputFile =
         Files.localOutput(temp.resolve("meta-" + System.nanoTime() + ".vortex").toFile());
     try (FileAppender<Record> appender =
@@ -257,7 +362,9 @@ public class TestVortexSchemaMetadata {
             .schema(schema)
             .content(FileContent.DATA)
             .build()) {
-      appender.add(record);
+      for (Record record : records) {
+        appender.add(record);
+      }
     }
 
     return outputFile.toInputFile();

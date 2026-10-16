@@ -53,6 +53,7 @@ abstract class BaseRowReader<T extends ScanTask> extends BaseReader<InternalRow,
       Map<Integer, ?> idToConstant) {
     ReadBuilder<InternalRow, ?> reader =
         FormatModelRegistry.readBuilder(format, InternalRow.class, file);
+    configureRead(format, reader);
     return reader
         .project(projection)
         .idToConstant(idToConstant)

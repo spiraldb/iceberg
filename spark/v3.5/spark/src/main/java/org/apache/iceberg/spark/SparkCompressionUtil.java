@@ -59,7 +59,9 @@ class SparkCompressionUtil {
    */
   public static double shuffleCompressionRatio(
       SparkSession spark, FileFormat outputFileFormat, String outputCodec) {
-    if (outputFileFormat == FileFormat.ORC || outputFileFormat == FileFormat.PARQUET) {
+    if (outputFileFormat == FileFormat.ORC
+        || outputFileFormat == FileFormat.PARQUET
+        || outputFileFormat == FileFormat.VORTEX) {
       return columnarCompression(shuffleCodec(spark), outputCodec);
     } else if (outputFileFormat == FileFormat.AVRO) {
       return rowBasedCompression(shuffleCodec(spark), outputCodec);

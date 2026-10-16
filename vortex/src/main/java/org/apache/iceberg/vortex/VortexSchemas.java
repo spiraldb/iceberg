@@ -79,17 +79,30 @@ public final class VortexSchemas {
 
   /** Convert a Vortex file's Arrow {@link org.apache.arrow.vector.types.pojo.Schema} to Iceberg. */
   public static Schema convert(org.apache.arrow.vector.types.pojo.Schema arrowSchema) {
-    return new Schema(convertFields(arrowSchema.getFields(), new AtomicInteger(0)));
+    return new Schema(
+        convertFields(
+            arrowSchema.getFields(),
+            new AtomicInteger(hasFieldIds(arrowSchema.getFields()) ? -1 : 0)));
   }
 
-  // Arrow/Vortex schemas carry no Iceberg field ids, so ids are synthesized here. A single shared
-  // counter assigns each field (including nested struct fields and list elements) a unique id in
-  // pre-order, which is all Iceberg requires for a valid schema; binding/projection happens by
-  // name.
+  private static boolean hasFieldIds(List<Field> fields) {
+    return fields.stream()
+        .anyMatch(field -> fieldId(field) != null || hasFieldIds(field.getChildren()));
+  }
+
+  private static int convertedId(Field field, AtomicInteger nextId) {
+    Integer id = fieldId(field);
+    if (id != null) {
+      return id;
+    }
+    // Unmapped fields must not collide with real Iceberg IDs, including newly added fields.
+    return nextId.get() < 0 ? nextId.getAndDecrement() : nextId.getAndIncrement();
+  }
+
   private static List<Types.NestedField> convertFields(List<Field> fields, AtomicInteger nextId) {
     List<Types.NestedField> columns = Lists.newArrayListWithExpectedSize(fields.size());
     for (Field field : fields) {
-      int fieldId = nextId.getAndIncrement();
+      int fieldId = convertedId(field, nextId);
       Type icebergType = toIcebergType(field, nextId);
       if (field.isNullable()) {
         columns.add(optional(fieldId, field.getName(), icebergType));
@@ -937,7 +950,7 @@ public final class VortexSchemas {
 
   private static Type toIcebergList(Field field, AtomicInteger nextId) {
     Field elementField = field.getChildren().get(0);
-    int elementId = nextId.getAndIncrement();
+    int elementId = convertedId(elementField, nextId);
     Type innerType = toIcebergType(elementField, nextId);
     return elementField.isNullable()
         ? Types.ListType.ofOptional(elementId, innerType)
@@ -972,9 +985,9 @@ public final class VortexSchemas {
     Field entries = field.getChildren().get(0);
     Field keyField = entries.getChildren().get(0);
     Field valueField = entries.getChildren().get(1);
-    int keyId = nextId.getAndIncrement();
+    int keyId = convertedId(keyField, nextId);
     Type keyType = toIcebergType(keyField, nextId);
-    int valueId = nextId.getAndIncrement();
+    int valueId = convertedId(valueField, nextId);
     Type valueType = toIcebergType(valueField, nextId);
     return valueField.isNullable()
         ? Types.MapType.ofOptional(keyId, valueId, keyType, valueType)
