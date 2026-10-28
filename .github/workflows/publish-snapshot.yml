@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   publish-snapshot:
-    if: github.repository_owner == 'apache'
+    if: github.repository_owner == 'spiraldb'
     runs-on: ubuntu-24.04
     environment: maven-publish
     steps:
@@ -48,13 +48,12 @@ jobs:
           # Read-only: small job; restore opportunistically from other jobs' caches but never write.
           cache-read-only: true
       - env:
-          NEXUS_USER: ${{ secrets.NEXUS_USER }}
-          NEXUS_PW: ${{ secrets.NEXUS_PW }}
+          ORG_GRADLE_PROJECT_mavenUser: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
         run: |
           ./gradlew printVersion
-          ./gradlew -DallModules publishApachePublicationToMavenRepository -PmavenUser="$NEXUS_USER" -PmavenPassword="$NEXUS_PW"
+          ./gradlew -DallModules publishApachePublicationToMavenRepository
           ./gradlew -DflinkVersions= -DsparkVersions=3.5 -DscalaVersion=2.13 -DkafkaVersions= \
             :iceberg-spark:iceberg-spark-3.5_2.13:publishApachePublicationToMavenRepository \
             :iceberg-spark:iceberg-spark-extensions-3.5_2.13:publishApachePublicationToMavenRepository \
-            :iceberg-spark:iceberg-spark-runtime-3.5_2.13:publishApachePublicationToMavenRepository \
-            -PmavenUser="$NEXUS_USER" -PmavenPassword="$NEXUS_PW"
+            :iceberg-spark:iceberg-spark-runtime-3.5_2.13:publishApachePublicationToMavenRepository
