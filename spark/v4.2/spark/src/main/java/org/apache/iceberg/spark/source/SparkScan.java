@@ -181,7 +181,13 @@ abstract class SparkScan implements Scan, SupportsReportStatistics {
         groupingKeyType(),
         taskGroups(),
         projection,
+        readerRuntimeFilter(),
         hashCode());
+  }
+
+  /** The runtime filter that readers apply to every file, with its residual. */
+  protected Expression readerRuntimeFilter() {
+    return Expressions.alwaysTrue();
   }
 
   @Override
