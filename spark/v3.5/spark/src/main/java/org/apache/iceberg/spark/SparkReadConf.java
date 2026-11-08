@@ -317,6 +317,22 @@ public class SparkReadConf {
         .parse();
   }
 
+  public boolean dataColumnRuntimeFilteringEnabled() {
+    return confParser
+        .booleanConf()
+        .sessionConf(SparkSQLProperties.DATA_COLUMN_RUNTIME_FILTERING_ENABLED)
+        .defaultValue(SparkSQLProperties.DATA_COLUMN_RUNTIME_FILTERING_ENABLED_DEFAULT)
+        .parse();
+  }
+
+  public int runtimeFilterMaxValues() {
+    return confParser
+        .intConf()
+        .sessionConf(SparkSQLProperties.RUNTIME_FILTER_MAX_VALUES)
+        .defaultValue(SparkSQLProperties.RUNTIME_FILTER_MAX_VALUES_DEFAULT)
+        .parse();
+  }
+
   public boolean adaptiveSplitSizeEnabled() {
     return confParser
         .booleanConf()

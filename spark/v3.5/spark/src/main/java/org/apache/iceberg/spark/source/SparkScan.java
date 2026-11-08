@@ -33,6 +33,7 @@ import org.apache.iceberg.SnapshotSummary;
 import org.apache.iceberg.StatisticsFile;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.expressions.Expression;
+import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.metrics.ScanReport;
 import org.apache.iceberg.relocated.com.google.common.base.Strings;
@@ -173,7 +174,13 @@ abstract class SparkScan implements Scan, SupportsReportStatistics {
         groupingKeyType(),
         taskGroups(),
         expectedSchema,
+        readerRuntimeFilter(),
         hashCode());
+  }
+
+  /** The runtime filter that readers apply to every file, with its residual. */
+  protected Expression readerRuntimeFilter() {
+    return Expressions.alwaysTrue();
   }
 
   @Override

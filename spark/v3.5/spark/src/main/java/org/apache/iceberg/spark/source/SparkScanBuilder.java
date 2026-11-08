@@ -20,6 +20,7 @@ package org.apache.iceberg.spark.source;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -98,6 +99,7 @@ public class SparkScanBuilder
   private final Table table;
   private final CaseInsensitiveStringMap options;
   private final SparkReadConf readConf;
+  private boolean dataColumnRuntimeFilters = true;
   private final List<String> metaColumns = Lists.newArrayList();
   private final InMemoryMetricsReporter metricsReporter;
 
@@ -416,7 +418,8 @@ public class SparkScanBuilder
         readConf,
         expectedSchema,
         filterExpressions,
-        metricsReporter::scanReport);
+        metricsReporter::scanReport,
+        offersDataColumns());
   }
 
   private org.apache.iceberg.Scan buildIcebergBatchScan(boolean withStats, Schema expectedSchema) {
@@ -480,10 +483,6 @@ public class SparkScanBuilder
             .project(expectedSchema)
             .metricsReporter(metricsReporter);
 
-    if (withStats) {
-      scan = scan.includeColumnStats();
-    }
-
     if (snapshotId != null) {
       scan = scan.useSnapshot(snapshotId);
     }
@@ -500,6 +499,14 @@ public class SparkScanBuilder
       scan = scan.useRef(tag);
     }
 
+    // the schema that the scan reads with, as SnapshotScan chooses it
+    String ref = branch != null ? branch : tag;
+    Schema scanSchema =
+        ref != null
+            ? SnapshotUtil.schemaFor(table, ref)
+            : SnapshotUtil.schemaFor(table, snapshotId, asOfTimestamp);
+    scan = includeStats(scan, scanSchema, expectedSchema, withStats);
+
     return configureSplitPlanning(scan);
   }
 
@@ -514,15 +521,50 @@ public class SparkScanBuilder
             .project(expectedSchema)
             .metricsReporter(metricsReporter);
 
-    if (withStats) {
-      scan = scan.includeColumnStats();
-    }
+    scan = includeStats(scan, table.schema(), expectedSchema, withStats);
 
     if (endSnapshotId != null) {
       scan = scan.toSnapshot(endSnapshotId);
     }
 
     return configureSplitPlanning(scan);
+  }
+
+  /**
+   * Asks {@code scan} for the column stats that the Spark scan uses. The scan finds each stats
+   * column by its name in {@code scanSchema}, the schema that it reads with.
+   */
+  private <S extends org.apache.iceberg.Scan<S, ?, ?>> S includeStats(
+      S scan, Schema scanSchema, Schema projection, boolean withStats) {
+    if (withStats) {
+      return scan.includeColumnStats();
+    }
+
+    // runtime filters on data columns drop files by the metrics of those columns. A column can
+    // have a different name in the scan schema, or no field at all when it was added after the
+    // snapshot that the scan reads, so find each name by the field ID.
+    List<String> statsColumns = Lists.newArrayList();
+    if (offersDataColumns()) {
+      SparkBatchQueryScan.dataFilterColumns(projection).stream()
+          .map(field -> scanSchema.findColumnName(field.fieldId()))
+          .filter(Objects::nonNull)
+          .forEach(statsColumns::add);
+    }
+
+    return statsColumns.isEmpty() ? scan : scan.includeColumnStats(statsColumns);
+  }
+
+  /**
+   * Keeps the scans this builder builds from offering data columns to runtime filtering. A
+   * row-level operation turns every filter attribute of its scan into a key of the groups it
+   * rewrites, and a data column cannot be such a key: its nulls match no key.
+   */
+  void withoutDataColumnRuntimeFilters() {
+    this.dataColumnRuntimeFilters = false;
+  }
+
+  private boolean offersDataColumns() {
+    return dataColumnRuntimeFilters && SparkBatchQueryScan.offersDataColumns(spark, readConf);
   }
 
   @SuppressWarnings("CyclomaticComplexity")
@@ -651,7 +693,8 @@ public class SparkScanBuilder
           readConf,
           schemaWithMetadataColumns(),
           filterExpressions,
-          metricsReporter::scanReport);
+          metricsReporter::scanReport,
+          offersDataColumns());
     }
 
     // remember the current snapshot ID for commit validation
@@ -681,7 +724,8 @@ public class SparkScanBuilder
         adjustedReadConf,
         expectedSchema,
         filterExpressions,
-        metricsReporter::scanReport);
+        metricsReporter::scanReport,
+        offersDataColumns());
   }
 
   public Scan buildCopyOnWriteScan() {
