@@ -159,4 +159,8 @@ public class SparkSQLProperties {
   public static final String COLUMN_AWARE_SPLIT_SIZE_ENABLED =
       "spark.sql.iceberg.read.column-aware-split-size.enabled";
   public static final boolean COLUMN_AWARE_SPLIT_SIZE_ENABLED_DEFAULT = true;
+
+  // The smallest split in file bytes that adaptive split sizing makes while each core has work
+  public static final String MIN_FILE_SPLIT_SIZE = "spark.sql.iceberg.read.min-file-split-size";
+  public static final long MIN_FILE_SPLIT_SIZE_DEFAULT = 64L * 1024 * 1024;
 }
