@@ -392,13 +392,21 @@ abstract class SparkScan implements Scan, SupportsReportStatistics {
    * split.
    */
   private long toFileBytes(long columnSplitSize, double share, long fileBytes) {
+    // Bin packing cannot fill each split completely, so the even share per core gets a third more
+    // room. Without it, two pieces of an even share often do not fit in one split, and the scan
+    // takes two waves of tasks.
+    long cores = Math.max(1, sparkContext.defaultParallelism());
+    long perCore = Math.max(1, fileBytes / cores + fileBytes / (3 * cores));
+
+    // Each task has a fixed cost, so a split is at least the minimum size unless that leaves
+    // cores without work.
+    long minSplitSize = Math.min(readConf.minFileSplitSize(), perCore);
     if (share >= 1.0) {
-      return columnSplitSize;
+      return Math.max(columnSplitSize, minSplitSize);
     }
 
-    long perCore = Math.max(1, fileBytes / Math.max(1, sparkContext.defaultParallelism()));
     long fileSplitSize = (long) Math.min(Long.MAX_VALUE / 2, columnSplitSize / share);
-    return Math.max(columnSplitSize, Math.min(fileSplitSize, perCore));
+    return Math.max(Math.max(columnSplitSize, minSplitSize), Math.min(fileSplitSize, perCore));
   }
 
   /**
