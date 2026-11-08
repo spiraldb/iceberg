@@ -30,6 +30,7 @@ import dev.vortex.jni.NativeRuntime;
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
@@ -140,7 +141,12 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
     long[] rowRange = null;
     if (splitByteRange != null) {
-      rowRange = toRowRange(splitByteRange, readable.length(), dataSource);
+      rowRange =
+          toRowRange(
+              splitByteRange,
+              readable.length(),
+              dataSource,
+              NativeFiles.splits(session, readable));
       if (rowRange[0] >= rowRange[1]) {
         // The byte range maps to zero rows: skip the scan entirely. An all-zero range must not
         // reach the native scan, which interprets it as "no range set".
@@ -340,16 +346,46 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
    * exact row count. Because every boundary maps through the same function, the contiguous byte
    * splits of a file map to contiguous, non-overlapping row ranges that cover every row exactly
    * once.
+   *
+   * <p>Each boundary then moves to the nearest natural split of the file, so a scan reads whole
+   * chunks: a boundary inside a chunk makes both neighbouring scans decode that chunk. Rounding is
+   * monotonic, so the ranges stay contiguous and still cover every row exactly once.
    */
-  private static long[] toRowRange(long[] byteRange, long fileLength, DataSource dataSource) {
+  private static long[] toRowRange(
+      long[] byteRange, long fileLength, DataSource dataSource, long[] chunkBoundaries) {
     Preconditions.checkState(
         dataSource.rowCount() instanceof DataSource.RowCount.Exact,
         "Cannot map a byte-range split to rows without an exact row count: %s",
         dataSource.rowCount());
     long totalRows = ((DataSource.RowCount.Exact) dataSource.rowCount()).value();
-    long begin = rowAt(byteRange[0], fileLength, totalRows);
-    long end = rowAt(byteRange[0] + byteRange[1], fileLength, totalRows);
+    long begin = nearestBoundary(rowAt(byteRange[0], fileLength, totalRows), chunkBoundaries);
+    long end =
+        nearestBoundary(
+            rowAt(byteRange[0] + byteRange[1], fileLength, totalRows), chunkBoundaries);
     return new long[] {begin, end};
+  }
+
+  private static long nearestBoundary(long row, long[] boundaries) {
+    if (boundaries.length == 0) {
+      return row;
+    }
+
+    int index = Arrays.binarySearch(boundaries, row);
+    if (index >= 0) {
+      return row;
+    }
+
+    int above = -index - 1;
+    if (above == 0) {
+      return boundaries[0];
+    }
+
+    if (above == boundaries.length) {
+      return boundaries[boundaries.length - 1];
+    }
+
+    long below = boundaries[above - 1];
+    return row - below <= boundaries[above] - row ? below : boundaries[above];
   }
 
   private static long rowAt(long byteOffset, long fileLength, long totalRows) {
