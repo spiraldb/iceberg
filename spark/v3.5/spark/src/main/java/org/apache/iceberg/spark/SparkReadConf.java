@@ -362,6 +362,14 @@ public class SparkReadConf {
         .parse();
   }
 
+  public long minFileSplitSize() {
+    return confParser
+        .longConf()
+        .sessionConf(SparkSQLProperties.MIN_FILE_SPLIT_SIZE)
+        .defaultValue(SparkSQLProperties.MIN_FILE_SPLIT_SIZE_DEFAULT)
+        .parse();
+  }
+
   public int splitParallelism() {
     int parallelism =
         confParser
