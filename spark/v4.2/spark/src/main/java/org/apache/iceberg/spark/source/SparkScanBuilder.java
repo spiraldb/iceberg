@@ -340,7 +340,7 @@ public class SparkScanBuilder extends BaseSparkScanBuilder
             .project(projection)
             .metricsReporter(metricsReporter());
 
-    scan = includeStats(scan, projection, withStats);
+    scan = includeStats(scan, table().schema(), projection, withStats);
 
     if (endSnapshotId != null) {
       scan = scan.toSnapshot(endSnapshotId);
@@ -362,8 +362,10 @@ public class SparkScanBuilder extends BaseSparkScanBuilder
             .project(projection)
             .metricsReporter(metricsReporter());
 
+    Schema scanSchema = table().schema();
     if (shouldPinSnapshot() || timeTravel != null) {
       scan = scan.useSnapshot(snapshot.snapshotId());
+      scanSchema = SnapshotUtil.schemaFor(table(), snapshot.snapshotId());
     }
 
     Preconditions.checkState(
@@ -376,35 +378,36 @@ public class SparkScanBuilder extends BaseSparkScanBuilder
       scan = scan.ignoreResiduals();
     }
 
-    scan = includeStats(scan, projection, withStats);
+    scan = includeStats(scan, scanSchema, projection, withStats);
 
     return configureSplitPlanning(scan);
   }
 
+  /**
+   * Asks {@code scan} for the column stats that the Spark scan uses. The scan finds each stats
+   * column by its name in {@code scanSchema}, the schema that it reads with.
+   */
   private <S extends org.apache.iceberg.Scan<S, ?, ?>> S includeStats(
-      S scan, Schema projection, boolean withStats) {
+      S scan, Schema scanSchema, Schema projection, boolean withStats) {
     if (withStats) {
       return scan.includeColumnStats();
     }
-    // runtime filters on data columns drop files by the metrics of those columns. The scan finds
-    // a column in the table schema or in the schema of its snapshot, so ask only for columns that
-    // both hold: a column added after the snapshot has no metrics in its files anyway.
+    // A column can have a different name in the scan schema, or no field at all when it was added
+    // after the snapshot that the scan reads, so find each name by the field ID.
     List<String> statsColumns = Lists.newArrayList(variantColumnNames(projection));
     if (readConf().columnAwareSplitSizeEnabled() && readConf().adaptiveSplitSizeEnabled()) {
       // adaptive split sizing counts the bytes of the projected columns, see SparkScan
       projection.columns().stream()
-          .map(Types.NestedField::name)
-          .filter(name -> table().schema().findField(name) != null)
+          .map(field -> scanSchema.findColumnName(field.fieldId()))
+          .filter(Objects::nonNull)
           .forEach(statsColumns::add);
     }
 
+    // runtime filters on data columns drop files by the metrics of those columns
     if (offersDataColumns()) {
-      Schema snapshotSchema =
-          snapshot != null ? SnapshotUtil.schemaFor(table(), snapshot.snapshotId()) : null;
       SparkRuntimeFilterableScan.dataFilterColumns(projection).stream()
-          .map(Types.NestedField::name)
-          .filter(name -> table().schema().findField(name) != null)
-          .filter(name -> snapshotSchema == null || snapshotSchema.findField(name) != null)
+          .map(field -> scanSchema.findColumnName(field.fieldId()))
+          .filter(Objects::nonNull)
           .forEach(statsColumns::add);
     }
 
