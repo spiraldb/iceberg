@@ -152,4 +152,9 @@ public class SparkSQLProperties {
   // This determines how many rows are buffered before inferring shredded schema
   public static final String VARIANT_INFERENCE_BUFFER_SIZE =
       "spark.sql.iceberg.variant-inference-buffer-size";
+
+  // Whether adaptive split sizing counts only the bytes of the columns that a scan reads
+  public static final String COLUMN_AWARE_SPLIT_SIZE_ENABLED =
+      "spark.sql.iceberg.read.column-aware-split-size.enabled";
+  public static final boolean COLUMN_AWARE_SPLIT_SIZE_ENABLED_DEFAULT = true;
 }

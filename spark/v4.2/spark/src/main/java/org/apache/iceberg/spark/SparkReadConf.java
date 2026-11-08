@@ -308,6 +308,14 @@ public class SparkReadConf {
     return Math.max(defaultParallelism, numShufflePartitions);
   }
 
+  public boolean columnAwareSplitSizeEnabled() {
+    return confParser
+        .booleanConf()
+        .sessionConf(SparkSQLProperties.COLUMN_AWARE_SPLIT_SIZE_ENABLED)
+        .defaultValue(SparkSQLProperties.COLUMN_AWARE_SPLIT_SIZE_ENABLED_DEFAULT)
+        .parse();
+  }
+
   public int splitParallelism() {
     int parallelism =
         confParser

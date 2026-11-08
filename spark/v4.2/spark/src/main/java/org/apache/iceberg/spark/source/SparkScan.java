@@ -22,9 +22,11 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.apache.iceberg.BlobMetadata;
+import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.ScanTask;
 import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.Schema;
@@ -32,6 +34,7 @@ import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.SnapshotSummary;
 import org.apache.iceberg.StatisticsFile;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.expressions.Binder;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.io.FileIO;
@@ -39,6 +42,7 @@ import org.apache.iceberg.metrics.ScanReport;
 import org.apache.iceberg.relocated.com.google.common.base.Strings;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.spark.Spark3Util;
 import org.apache.iceberg.spark.SparkReadConf;
 import org.apache.iceberg.spark.SparkSchemaUtil;
@@ -77,6 +81,7 @@ import org.apache.iceberg.spark.source.metrics.TotalDataManifests;
 import org.apache.iceberg.spark.source.metrics.TotalDeleteFileSize;
 import org.apache.iceberg.spark.source.metrics.TotalDeleteManifests;
 import org.apache.iceberg.spark.source.metrics.TotalPlanningDuration;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.TableScanUtil;
@@ -100,6 +105,8 @@ import org.slf4j.LoggerFactory;
 abstract class SparkScan implements Scan, SupportsReportStatistics {
   private static final Logger LOG = LoggerFactory.getLogger(SparkScan.class);
   private static final String NDV_KEY = "ndv";
+  private static final int COLUMN_SHARE_SAMPLE_FILES = 16;
+  private static final double MIN_COLUMN_SHARE = 0.01;
 
   private final JavaSparkContext sparkContext;
   private final Table table;
@@ -379,11 +386,69 @@ abstract class SparkScan implements Scan, SupportsReportStatistics {
     };
   }
 
+  /**
+   * Turns a split size in bytes of the scanned columns into a split size in file bytes. A split
+   * then holds as much column data as the size asks for, but each core still gets at least one
+   * split.
+   */
+  private long toFileBytes(long columnSplitSize, double share, long fileBytes) {
+    if (share >= 1.0) {
+      return columnSplitSize;
+    }
+
+    long perCore = Math.max(1, fileBytes / Math.max(1, sparkContext.defaultParallelism()));
+    long fileSplitSize = (long) Math.min(Long.MAX_VALUE / 2, columnSplitSize / share);
+    return Math.max(columnSplitSize, Math.min(fileSplitSize, perCore));
+  }
+
+  /**
+   * The share of the data file bytes that the scan reads: the columns it projects and filters on,
+   * from the column sizes that the manifests record for a sample of the files. It is 1 when the
+   * planned files carry no column sizes.
+   */
+  private double columnShare(List<? extends ScanTask> tasks) {
+    Set<Integer> fieldIds = Sets.newHashSet(TypeUtil.getProjectedIds(projection));
+    fieldIds.addAll(Binder.boundReferences(schema.asStruct(), filters, caseSensitive));
+
+    Set<String> sampled = Sets.newHashSet();
+    long selected = 0;
+    long total = 0;
+    for (ScanTask task : tasks) {
+      if (sampled.size() >= COLUMN_SHARE_SAMPLE_FILES) {
+        break;
+      }
+
+      if (!(task instanceof FileScanTask fileTask)
+          || !sampled.add(fileTask.file().location())
+          || fileTask.file().columnSizes() == null) {
+        continue;
+      }
+
+      // The planned files carry the sizes of the requested columns only, so the total is the file.
+      total += fileTask.file().fileSizeInBytes();
+      for (Map.Entry<Integer, Long> size : fileTask.file().columnSizes().entrySet()) {
+        if (fieldIds.contains(size.getKey())) {
+          selected += size.getValue();
+        }
+      }
+    }
+
+    if (total <= 0) {
+      return 1.0;
+    }
+
+    return Math.min(1.0, Math.max(MIN_COLUMN_SHARE, (double) selected / total));
+  }
+
   protected long adjustSplitSize(List<? extends ScanTask> tasks, long splitSize) {
     if (readConf.splitSizeOption() == null && readConf.adaptiveSplitSizeEnabled()) {
-      long scanSize = tasks.stream().mapToLong(ScanTask::sizeBytes).sum();
+      long fileBytes = tasks.stream().mapToLong(ScanTask::sizeBytes).sum();
+      double share = readConf.columnAwareSplitSizeEnabled() ? columnShare(tasks) : 1.0;
+      long scanSize = (long) (fileBytes * share);
       int parallelism = readConf.splitParallelism();
-      long adjustedSplitSize = TableScanUtil.adjustSplitSize(scanSize, parallelism, splitSize);
+      long adjustedSplitSize =
+          toFileBytes(
+              TableScanUtil.adjustSplitSize(scanSize, parallelism, splitSize), share, fileBytes);
       if (adjustedSplitSize != splitSize) {
         LOG.debug(
             "Adjusted split size from {} to {} for table {} with parallelism {}",
