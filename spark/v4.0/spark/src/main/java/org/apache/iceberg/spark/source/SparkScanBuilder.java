@@ -602,6 +602,14 @@ public class SparkScanBuilder
     // have a different name in the scan schema, or no field at all when it was added after the
     // snapshot that the scan reads, so find each name by the field ID.
     List<String> statsColumns = Lists.newArrayList(variantColumnNames(projection));
+    if (readConf.columnAwareSplitSizeEnabled() && readConf.adaptiveSplitSizeEnabled()) {
+      // adaptive split sizing counts the bytes of the projected columns, see SparkScan
+      projection.columns().stream()
+          .map(field -> scanSchema.findColumnName(field.fieldId()))
+          .filter(Objects::nonNull)
+          .forEach(statsColumns::add);
+    }
+
     if (offersDataColumns()) {
       SparkBatchQueryScan.dataFilterColumns(projection).stream()
           .map(field -> scanSchema.findColumnName(field.fieldId()))
@@ -609,7 +617,8 @@ public class SparkScanBuilder
           .forEach(statsColumns::add);
     }
 
-    return statsColumns.isEmpty() ? scan : scan.includeColumnStats(statsColumns);
+    List<String> distinct = statsColumns.stream().distinct().collect(Collectors.toList());
+    return distinct.isEmpty() ? scan : scan.includeColumnStats(distinct);
   }
 
   /**
