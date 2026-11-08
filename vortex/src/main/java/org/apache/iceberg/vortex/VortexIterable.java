@@ -142,27 +142,6 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   private CloseableIterator<T> open(Session session, NativeReadable readable) {
     DataSource dataSource = DataSource.open(session, readable);
 
-    long[] rowRange = null;
-    if (splitByteRange != null) {
-      rowRange =
-          toRowRange(
-              splitByteRange,
-              readable.length(),
-              dataSource,
-              NativeFiles.splits(session, readable));
-      if (rowRange[0] >= rowRange[1]) {
-        // The byte range maps to zero rows: skip the scan entirely. An all-zero range must not
-        // reach the native scan, which interprets it as "no range set".
-        try {
-          readable.close();
-        } catch (IOException e) {
-          throw new org.apache.iceberg.exceptions.RuntimeIOException(
-              e, "Failed to close input source for %s", inputFile.location());
-        }
-        return CloseableIterator.empty();
-      }
-    }
-
     dev.vortex.relocated.org.apache.arrow.memory.BufferAllocator vortexAllocator =
         VortexArrowBridge.vortexAllocator();
     BufferAllocator allocator = VortexArrowBridge.arrowAllocator();
@@ -224,6 +203,28 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     ImmutableList.Builder<dev.vortex.api.Expression> expressions = ImmutableList.builder();
     addColumnProjections(fileArrowSchema, fieldNames, expressions);
 
+    long[] rowRange = null;
+    if (splitByteRange != null) {
+      rowRange =
+          toRowRange(
+              splitByteRange,
+              readable.length(),
+              dataSource,
+              NativeFiles.splits(
+                  session, readable, splitColumns(fieldNames.build(), fileArrowSchema)));
+      if (rowRange[0] >= rowRange[1]) {
+        // The byte range maps to zero rows: skip the scan entirely. An all-zero range must not
+        // reach the native scan, which interprets it as "no range set".
+        try {
+          readable.close();
+        } catch (IOException e) {
+          throw new org.apache.iceberg.exceptions.RuntimeIOException(
+              e, "Failed to close input source for %s", inputFile.location());
+        }
+        return CloseableIterator.empty();
+      }
+    }
+
     // Row position is not a stored column. When requested, materialize it from Vortex's `row_idx`
     // scan expression packed under the _pos metadata-column name, and append a matching _pos field
     // to the schema handed to the reader. Both bind by name, so _pos resolves regardless of where
@@ -281,6 +282,20 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
       VortexBatchReader<T> batchTransform = batchReaderFunction.apply(readerArrowSchema);
       return new VortexBatchIterator<>(batchIterator, batchTransform);
     }
+  }
+
+  /**
+   * The file columns whose chunks the split follows: the projected columns. Finding the chunks of
+   * every column of a wide file costs much more than of the few columns a scan reads. A scan that
+   * projects no column, such as a count, follows the first file column.
+   */
+  private static List<String> splitColumns(
+      List<String> projected, org.apache.arrow.vector.types.pojo.Schema fileArrowSchema) {
+    if (!projected.isEmpty() || fileArrowSchema.getFields().isEmpty()) {
+      return projected;
+    }
+
+    return ImmutableList.of(fileArrowSchema.getFields().get(0).getName());
   }
 
   private void addColumnProjections(
