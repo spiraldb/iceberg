@@ -51,6 +51,7 @@ import org.apache.iceberg.spark.TimeTravel;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.Pair;
+import org.apache.iceberg.util.SnapshotUtil;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.expressions.aggregate.AggregateFunc;
@@ -79,6 +80,7 @@ public class SparkScanBuilder extends BaseSparkScanBuilder
   private final Long startSnapshotId;
   private final Long endSnapshotId;
   private Scan localScan;
+  private boolean dataColumnRuntimeFilters = true;
 
   SparkScanBuilder(SparkSession spark, Table table, CaseInsensitiveStringMap options) {
     this(
@@ -267,7 +269,8 @@ public class SparkScanBuilder extends BaseSparkScanBuilder
         readConf(),
         projection,
         filters(),
-        metricsReporter()::scanReport);
+        metricsReporter()::scanReport,
+        offersDataColumns());
   }
 
   private Scan buildIncrementalAppendScan() {
@@ -281,7 +284,8 @@ public class SparkScanBuilder extends BaseSparkScanBuilder
         readConf(),
         projection,
         filters(),
-        metricsReporter()::scanReport);
+        metricsReporter()::scanReport,
+        offersDataColumns());
   }
 
   public Scan buildCopyOnWriteScan() {
@@ -374,8 +378,21 @@ public class SparkScanBuilder extends BaseSparkScanBuilder
     if (withStats) {
       return scan.includeColumnStats();
     }
-    List<String> variantColumns = variantColumnNames(projection);
-    return variantColumns.isEmpty() ? scan : scan.includeColumnStats(variantColumns);
+    // runtime filters on data columns drop files by the metrics of those columns. The scan finds
+    // a column in the table schema or in the schema of its snapshot, so ask only for columns that
+    // both hold: a column added after the snapshot has no metrics in its files anyway.
+    List<String> statsColumns = Lists.newArrayList(variantColumnNames(projection));
+    if (offersDataColumns()) {
+      Schema snapshotSchema =
+          snapshot != null ? SnapshotUtil.schemaFor(table(), snapshot.snapshotId()) : null;
+      SparkRuntimeFilterableScan.dataFilterColumns(projection).stream()
+          .map(Types.NestedField::name)
+          .filter(name -> table().schema().findField(name) != null)
+          .filter(name -> snapshotSchema == null || snapshotSchema.findField(name) != null)
+          .forEach(statsColumns::add);
+    }
+
+    return statsColumns.isEmpty() ? scan : scan.includeColumnStats(statsColumns);
   }
 
   private List<String> variantColumnNames(Schema projection) {
@@ -383,6 +400,20 @@ public class SparkScanBuilder extends BaseSparkScanBuilder
         .filter(field -> field.type().isVariantType())
         .map(Types.NestedField::name)
         .collect(Collectors.toList());
+  }
+
+  /**
+   * Keeps the scans this builder builds from offering data columns to runtime filtering. A
+   * row-level operation turns every filter attribute of its scan into a key of the groups it
+   * rewrites, and a data column cannot be such a key: its nulls match no key.
+   */
+  void withoutDataColumnRuntimeFilters() {
+    this.dataColumnRuntimeFilters = false;
+  }
+
+  private boolean offersDataColumns() {
+    return dataColumnRuntimeFilters
+        && SparkRuntimeFilterableScan.offersDataColumns(spark(), readConf());
   }
 
   private BatchScan newIcebergBatchScan() {
