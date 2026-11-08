@@ -514,6 +514,37 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
   }
 
   /**
+   * The list literal of an integer or string set, built in one native call, or null for other
+   * types. A runtime join filter holds thousands of values, and each task converts it, so a Vortex
+   * expression per value costs much more than the scan reads.
+   */
+  private static <T> Expression bulkList(Expression elementType, Set<T> literalSet, Type termType) {
+    switch (termType.typeId()) {
+      case INTEGER, LONG -> {
+        long[] values = new long[literalSet.size()];
+        int index = 0;
+        for (T value : literalSet) {
+          values[index++] = ((Number) value).longValue();
+        }
+
+        return Expression.literalLongList(elementType, false, values);
+      }
+      case STRING -> {
+        String[] values = new String[literalSet.size()];
+        int index = 0;
+        for (T value : literalSet) {
+          values[index++] = ((CharSequence) value).toString();
+        }
+
+        return Expression.literalStringList(elementType, false, values);
+      }
+      default -> {
+        return null;
+      }
+    }
+  }
+
+  /**
    * Translates IN / NOT_IN into a Vortex list membership test against a list literal.
    *
    * <p>Vortex NOT IN uses SQL null rules and does not match null, but Iceberg's {@code notIn} does
@@ -525,6 +556,15 @@ public final class ConvertFilterToVortex extends ExpressionVisitors.ExpressionVi
     Expression elementType = toVortexNullLiteral(termType);
     if (elementType == UNCONVERTIBLE) {
       return UNCONVERTIBLE;
+    }
+
+    Expression bulk = bulkList(elementType, literalSet, termType);
+    if (bulk != null) {
+      return switch (op) {
+        case IN -> Expression.in(term, bulk);
+        case NOT_IN -> Expression.or(Expression.isNull(term), Expression.notIn(term, bulk));
+        default -> UNCONVERTIBLE;
+      };
     }
 
     Expression[] elements = new Expression[literalSet.size()];
