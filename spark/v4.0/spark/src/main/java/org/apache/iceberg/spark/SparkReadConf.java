@@ -21,6 +21,7 @@ package org.apache.iceberg.spark;
 import static org.apache.iceberg.PlanningMode.LOCAL;
 
 import java.util.Map;
+import java.util.Optional;
 import org.apache.iceberg.PlanningMode;
 import org.apache.iceberg.SupportsDistributedScanPlanning;
 import org.apache.iceberg.Table;
@@ -161,6 +162,11 @@ public class SparkReadConf {
         .tableProperty(TableProperties.PARQUET_VECTORIZATION_ENABLED)
         .defaultValue(TableProperties.PARQUET_VECTORIZATION_ENABLED_DEFAULT)
         .parse();
+  }
+
+  public Optional<String> vortexLikeFilters() {
+    return Optional.ofNullable(
+        confParser.stringConf().option(SparkReadOptions.VORTEX_LIKE_FILTERS).parseOptional());
   }
 
   public int parquetBatchSize() {

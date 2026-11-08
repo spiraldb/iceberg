@@ -164,7 +164,10 @@ class SparkBatch implements Batch {
   }
 
   private VortexBatchReadConf vortexBatchReadConf() {
-    return ImmutableVortexBatchReadConf.builder().batchSize(readConf.parquetBatchSize()).build();
+    return ImmutableVortexBatchReadConf.builder()
+        .batchSize(readConf.parquetBatchSize())
+        .likeFilters(readConf.vortexLikeFilters())
+        .build();
   }
 
   // conditions for using Parquet batch reads:
