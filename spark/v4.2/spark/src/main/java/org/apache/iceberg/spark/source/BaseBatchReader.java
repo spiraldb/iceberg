@@ -43,6 +43,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.OrcBatchReadConf;
 import org.apache.iceberg.spark.ParquetBatchReadConf;
 import org.apache.iceberg.spark.VortexBatchReadConf;
+import org.apache.iceberg.vortex.VortexLikeFilters;
 import org.apache.iceberg.spark.data.vectorized.ColumnVectorWithFilter;
 import org.apache.iceberg.spark.data.vectorized.ColumnarBatchUtil;
 import org.apache.iceberg.spark.data.vectorized.DeletedColumnVector;
@@ -91,6 +92,9 @@ abstract class BaseBatchReader<T extends ScanTask> extends BaseReader<ColumnarBa
       readBuilder = readBuilder.recordsPerBatch(orcConf.batchSize());
     } else if (vortexConf != null) {
       readBuilder = readBuilder.recordsPerBatch(vortexConf.batchSize());
+      if (format == FileFormat.VORTEX && vortexConf.likeFilters().isPresent()) {
+        readBuilder = readBuilder.set(VortexLikeFilters.PROPERTY, vortexConf.likeFilters().get());
+      }
     }
 
     if (readBuilder.supportsPositionDeletes()) {

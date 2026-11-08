@@ -63,6 +63,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
   private final InputFile inputFile;
   private final Optional<Expression> filterPredicate;
+  private final List<VortexLikeFilters.Like> likeFilters;
   private final long[] splitByteRange;
   private final byte[] posDeleteBitmap;
   private final boolean includeRowPosition;
@@ -84,6 +85,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
       Schema expectedSchema,
       List<Types.NestedField> projection,
       Optional<Expression> filterPredicate,
+      List<VortexLikeFilters.Like> likeFilters,
       long[] splitByteRange,
       byte[] posDeleteBitmap,
       boolean includeRowPosition,
@@ -99,6 +101,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     this.expectedSchema = expectedSchema;
     this.projection = projection;
     this.filterPredicate = filterPredicate;
+    this.likeFilters = likeFilters;
     this.splitByteRange = splitByteRange;
     this.posDeleteBitmap = posDeleteBitmap;
     this.includeRowPosition = includeRowPosition;
@@ -189,6 +192,23 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
                     filterArrowSchema,
                     icebergExpression,
                     caseSensitive));
+
+    if (!likeFilters.isEmpty()) {
+      dev.vortex.api.Expression likes =
+          ConvertFilterToVortex.convertLikes(
+              expectedSchema,
+              VortexSchemas.convert(vortexArrowSchema),
+              filterArrowSchema,
+              likeFilters,
+              caseSensitive);
+      if (likes != ConvertFilterToVortex.ALWAYS_TRUE) {
+        scanFilter =
+            Optional.of(
+                scanFilter
+                    .map(filter -> dev.vortex.api.Expression.and(filter, likes))
+                    .orElse(likes));
+      }
+    }
 
     // Vortex resolves projected columns by name and errors on any name not in the file. Each
     // expected column is bound to the file column with the same Iceberg id (so a column renamed
