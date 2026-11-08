@@ -382,6 +382,14 @@ public class SparkScanBuilder extends BaseSparkScanBuilder
     // a column in the table schema or in the schema of its snapshot, so ask only for columns that
     // both hold: a column added after the snapshot has no metrics in its files anyway.
     List<String> statsColumns = Lists.newArrayList(variantColumnNames(projection));
+    if (readConf().columnAwareSplitSizeEnabled() && readConf().adaptiveSplitSizeEnabled()) {
+      // adaptive split sizing counts the bytes of the projected columns, see SparkScan
+      projection.columns().stream()
+          .map(Types.NestedField::name)
+          .filter(name -> table().schema().findField(name) != null)
+          .forEach(statsColumns::add);
+    }
+
     if (offersDataColumns()) {
       Schema snapshotSchema =
           snapshot != null ? SnapshotUtil.schemaFor(table(), snapshot.snapshotId()) : null;
@@ -392,7 +400,8 @@ public class SparkScanBuilder extends BaseSparkScanBuilder
           .forEach(statsColumns::add);
     }
 
-    return statsColumns.isEmpty() ? scan : scan.includeColumnStats(statsColumns);
+    List<String> distinct = statsColumns.stream().distinct().collect(Collectors.toList());
+    return distinct.isEmpty() ? scan : scan.includeColumnStats(distinct);
   }
 
   private List<String> variantColumnNames(Schema projection) {
