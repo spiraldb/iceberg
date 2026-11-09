@@ -1044,6 +1044,10 @@ project(':iceberg-vortex') {
       exclude group: 'com.google.code.findbugs', module: 'jsr305'
     }
     runtimeOnly libs.netty.buffer
+    // VortexIO opens Hadoop streams with the known file length. Engines that use Hadoop supply it.
+    compileOnly(libs.hadoop3.client) {
+      exclude group: 'org.apache.avro', module: 'avro'
+    }
 
     annotationProcessor libs.immutables.value
     compileOnly libs.immutables.value
