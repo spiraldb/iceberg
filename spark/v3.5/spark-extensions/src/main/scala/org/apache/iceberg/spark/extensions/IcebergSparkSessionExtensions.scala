@@ -26,6 +26,7 @@ import org.apache.spark.sql.catalyst.analysis.ResolveViews
 import org.apache.spark.sql.catalyst.analysis.RewriteMergeIntoTableForRowLineage
 import org.apache.spark.sql.catalyst.analysis.RewriteUpdateTableForRowLineage
 import org.apache.spark.sql.catalyst.optimizer.RemoveRowLineageOutputFromOriginalTable
+import org.apache.spark.sql.catalyst.optimizer.InstallNestedDynamicPruning
 import org.apache.spark.sql.catalyst.optimizer.ReplaceStaticInvoke
 import org.apache.spark.sql.catalyst.parser.extensions.IcebergSparkSqlExtensionsParser
 import org.apache.spark.sql.execution.datasources.v2.ExtendedDataSourceV2Strategy
@@ -43,6 +44,8 @@ class IcebergSparkSessionExtensions extends (SparkSessionExtensions => Unit) {
     extensions.injectCheckRule(_ => CheckViews)
     extensions.injectResolutionRule { _ => RewriteUpdateTableForRowLineage }
     extensions.injectResolutionRule { _ => RewriteMergeIntoTableForRowLineage }
+    // lets scans offer data columns to dynamic pruning without nesting pruning subqueries
+    extensions.injectPostHocResolutionRule { spark => InstallNestedDynamicPruning(spark) }
 
     // optimizer extensions
     extensions.injectOptimizerRule { _ => ReplaceStaticInvoke }
