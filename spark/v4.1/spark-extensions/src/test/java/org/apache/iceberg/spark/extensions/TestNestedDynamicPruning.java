@@ -48,7 +48,11 @@ public class TestNestedDynamicPruning extends ExtensionsTestBase {
 
   @TestTemplate
   public void testSelfJoinedDataColumnsDoNotNestPruningSubqueries() {
-    sql("CREATE TABLE %s (id BIGINT, key BIGINT) USING iceberg", tableName);
+    // only scans of Vortex tables offer data columns to runtime filtering
+    sql(
+        "CREATE TABLE %s (id BIGINT, key BIGINT) USING iceberg "
+            + "TBLPROPERTIES ('write.format.default' = 'vortex')",
+        tableName);
     sql("INSERT INTO %s SELECT id, id %% 10 FROM range(0, 1000)", tableName);
     // files keep the optimizer from folding the dimension into a constant
     String dimLocation = temp.resolve("dim").toString();
