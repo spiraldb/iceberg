@@ -26,6 +26,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.FileContent;
+import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.MetadataColumns;
 import org.apache.iceberg.PartitionField;
@@ -36,6 +37,7 @@ import org.apache.iceberg.ScanTask;
 import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.expressions.And;
 import org.apache.iceberg.expressions.Binder;
@@ -134,7 +136,8 @@ abstract class SparkRuntimeFilterableScan extends SparkPartitioningAwareScan<Par
         .filter(fieldId -> projection().findField(fieldId) != null)
         .forEach(filterFieldIds::add);
 
-    if (dataColumnFilters) {
+    // a table can hold files of an earlier write format, whose readers keep the filtered rows
+    if (dataColumnFilters && readsOnlyVortex()) {
       dataFilterColumns(projection()).forEach(field -> filterFieldIds.add(field.fieldId()));
     }
 
@@ -144,14 +147,40 @@ abstract class SparkRuntimeFilterableScan extends SparkPartitioningAwareScan<Par
   }
 
   /**
-   * Whether scans offer data columns to runtime filtering, not only partition source columns.
+   * Whether scans of {@code table} offer data columns to runtime filtering, not only partition
+   * source columns.
    *
    * <p>Data columns can only prune when the nested dynamic pruning rule of the Iceberg session
    * extensions stops pruning subqueries from nesting into each other. Their runtime filters drop
    * files by their column metrics, and reach the file readers with the residual.
+   *
+   * <p>Only tables that write Vortex files offer them. A runtime filter delays the scan until its
+   * subquery completes. The Vortex reader drops the rows that the filter rules out, which is worth
+   * that delay. Other readers keep those rows, and the files of most tables are not clustered by
+   * the join keys, so the filter often drops nothing and only adds the delay.
    */
-  static boolean offersDataColumns(SparkSession spark, SparkReadConf readConf) {
-    return readConf.dataColumnRuntimeFilteringEnabled() && NestedDynamicPruning.installed(spark);
+  static boolean offersDataColumns(SparkSession spark, Table table, SparkReadConf readConf) {
+    return readConf.dataColumnRuntimeFilteringEnabled()
+        && NestedDynamicPruning.installed(spark)
+        && writesVortex(table);
+  }
+
+  private static boolean writesVortex(Table table) {
+    String format =
+        table
+            .properties()
+            .getOrDefault(
+                TableProperties.DEFAULT_FILE_FORMAT, TableProperties.DEFAULT_FILE_FORMAT_DEFAULT);
+    return FileFormat.fromString(format) == FileFormat.VORTEX;
+  }
+
+  /** Whether every file of this scan is a Vortex file, so its reader drops filtered rows. */
+  private boolean readsOnlyVortex() {
+    return tasks().stream()
+        .allMatch(
+            task ->
+                task.isFileScanTask()
+                    && task.asFileScanTask().file().format() == FileFormat.VORTEX);
   }
 
   /** The data columns of {@code projection} that scans offer to runtime filtering. */

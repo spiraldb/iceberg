@@ -470,16 +470,18 @@ public class TestRuntimeFiltering extends TestBaseWithCatalog {
   }
 
   @TestTemplate
-  public void testDataColumnOfUnpartitionedTable() throws NoSuchTableException {
-    assertDataColumnRuntimeFilter("parquet");
+  public void testNoDataColumnOfUnpartitionedParquetTable() throws NoSuchTableException {
+    // the Parquet reader keeps the rows that a data column filter rules out
+    assertDataColumnRuntimeFilter("parquet", false);
   }
 
   @TestTemplate
   public void testDataColumnOfUnpartitionedVortexTable() throws NoSuchTableException {
-    assertDataColumnRuntimeFilter("vortex");
+    assertDataColumnRuntimeFilter("vortex", true);
   }
 
-  private void assertDataColumnRuntimeFilter(String format) throws NoSuchTableException {
+  private void assertDataColumnRuntimeFilter(String format, boolean offered)
+      throws NoSuchTableException {
     sql(
         "CREATE TABLE %s (id BIGINT, data STRING) USING iceberg "
             + "TBLPROPERTIES ('write.format.default' = '%s')",
@@ -508,6 +510,15 @@ public class TestRuntimeFiltering extends TestBaseWithCatalog {
     Seq<Rule<LogicalPlan>> optimizations = spark.experimental().extraOptimizations();
     NestedDynamicPruning.install(spark);
     try {
+      if (!offered) {
+        assertQueryContainsNoRuntimeFilter(query);
+        assertEquals(
+            "Should have expected rows",
+            sql("SELECT * FROM %s WHERE id = 1", tableName),
+            sql(query));
+        return;
+      }
+
       assertQueryContainsRuntimeFilter(query);
 
       withSQLConf(

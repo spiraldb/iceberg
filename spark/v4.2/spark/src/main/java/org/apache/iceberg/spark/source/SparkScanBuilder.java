@@ -433,7 +433,7 @@ public class SparkScanBuilder extends BaseSparkScanBuilder
 
   private boolean offersDataColumns() {
     return dataColumnRuntimeFilters
-        && SparkRuntimeFilterableScan.offersDataColumns(spark(), readConf());
+        && SparkRuntimeFilterableScan.offersDataColumns(spark(), table(), readConf());
   }
 
   private BatchScan newIcebergBatchScan() {
