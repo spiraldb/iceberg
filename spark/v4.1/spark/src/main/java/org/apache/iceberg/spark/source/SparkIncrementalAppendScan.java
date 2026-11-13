@@ -99,7 +99,7 @@ class SparkIncrementalAppendScan extends SparkRuntimeFilterableScan {
         startSnapshotId,
         endSnapshotId,
         filtersDesc(),
-        runtimeFiltersDesc(),
+        runtimeFiltersSummary(),
         groupingKeyDesc());
   }
 }

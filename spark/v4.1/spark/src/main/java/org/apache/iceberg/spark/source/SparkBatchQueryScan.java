@@ -114,7 +114,7 @@ class SparkBatchQueryScan extends SparkRuntimeFilterableScan {
         snapshotId(),
         branch,
         filtersDesc(),
-        runtimeFiltersDesc(),
+        runtimeFiltersSummary(),
         groupingKeyDesc());
   }
 }
