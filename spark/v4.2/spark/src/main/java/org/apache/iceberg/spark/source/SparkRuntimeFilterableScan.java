@@ -77,11 +77,16 @@ abstract class SparkRuntimeFilterableScan extends SparkPartitioningAwareScan<Par
   // InclusiveMetricsEvaluator reads no value bounds for an IN with more literals than this
   private static final int METRICS_IN_LIMIT = 200;
 
+  // descriptions of a runtime IN filter show at most this many of its literals
+  private static final int DESCRIBED_IN_LIMIT = 10;
+
   private final SparkReadConf readConf;
   private final boolean dataColumnFilters;
   private final List<Expression> runtimeFilters;
   private final List<Predicate> pushedPredicates;
   private Expression readerRuntimeFilter = Expressions.alwaysTrue();
+  private String runtimeFiltersDesc = "";
+  private String runtimeFiltersSummary = "";
 
   protected SparkRuntimeFilterableScan(
       SparkSession spark,
@@ -287,6 +292,14 @@ abstract class SparkRuntimeFilterableScan extends SparkPartitioningAwareScan<Par
       // save the evaluated filter for equals/hashCode
       runtimeFilters.add(runtimeFilter);
 
+      // a runtime IN filter can hold millions of literals, and Spark compares scans and prints
+      // plans many times, so build both descriptions once
+      this.runtimeFiltersDesc = Spark3Util.describe(runtimeFilters);
+      this.runtimeFiltersSummary =
+          runtimeFilters.stream()
+              .map(SparkRuntimeFilterableScan::summarize)
+              .collect(Collectors.joining(", "));
+
       // readers skip the chunks and row groups the filter rules out, and the Vortex reader drops
       // the rows it rules out, which the join drops anyway
       if (dataColumnFilters) {
@@ -400,7 +413,42 @@ abstract class SparkRuntimeFilterableScan extends SparkPartitioningAwareScan<Par
         Expressions.lessThanOrEqual(pred.term(), max));
   }
 
-  protected String runtimeFiltersDesc() {
-    return Spark3Util.describe(runtimeFilters);
+  /**
+   * Describes {@code filter} as {@link Spark3Util#describe(Expression)} does, but shows only the
+   * first {@link #DESCRIBED_IN_LIMIT} literals of each larger IN conjunct.
+   */
+  private static String summarize(Expression filter) {
+    if (filter instanceof And and) {
+      return "(" + summarize(and.left()) + " AND " + summarize(and.right()) + ")";
+    }
+
+    if (!(filter instanceof UnboundPredicate<?> pred)
+        || pred.op() != Expression.Operation.IN
+        || pred.literals().size() <= DESCRIBED_IN_LIMIT) {
+      return Spark3Util.describe(filter);
+    }
+
+    return summarizeIn(pred);
+  }
+
+  private static <T> String summarizeIn(UnboundPredicate<T> pred) {
+    List<T> shown =
+        pred.literals().stream()
+            .limit(DESCRIBED_IN_LIMIT)
+            .map(Literal::value)
+            .collect(Collectors.toList());
+    String described = Spark3Util.describe(Expressions.in(pred.term(), shown));
+    String hidden = (pred.literals().size() - shown.size()) + " more";
+    return described.substring(0, described.length() - 1) + ", ... " + hidden + ")";
+  }
+
+  /** The full description of the runtime filters, which tells apart scans with other filters. */
+  protected synchronized String runtimeFiltersDesc() {
+    return runtimeFiltersDesc;
+  }
+
+  /** The description of the runtime filters for plans, with large IN lists shortened. */
+  protected synchronized String runtimeFiltersSummary() {
+    return runtimeFiltersSummary;
   }
 }

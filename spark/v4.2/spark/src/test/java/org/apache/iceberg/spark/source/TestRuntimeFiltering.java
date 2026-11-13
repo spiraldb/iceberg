@@ -545,6 +545,50 @@ public class TestRuntimeFiltering extends TestBaseWithCatalog {
   }
 
   @TestTemplate
+  public void testPlanShortensLargeRuntimeInFilter() throws NoSuchTableException {
+    sql(
+        "CREATE TABLE %s (id BIGINT, data STRING) USING iceberg "
+            + "TBLPROPERTIES ('write.format.default' = 'vortex')",
+        tableName);
+    configurePlanningMode(planningMode);
+
+    spark
+        .range(1, 100)
+        .withColumn("data", expr("CAST(id AS STRING)"))
+        .coalesce(1)
+        .writeTo(tableName)
+        .append();
+
+    sql("CREATE TABLE dim (id BIGINT, date DATE) USING parquet");
+    Dataset<Row> dimDF =
+        spark.range(1, 21).withColumn("date", expr("DATE '1970-01-02'")).select("id", "date");
+    dimDF.coalesce(1).write().mode("append").insertInto("dim");
+
+    String query =
+        String.format(
+            "SELECT f.* FROM %s f JOIN dim d ON f.id = d.id AND d.date = DATE '1970-01-02' "
+                + "ORDER BY id",
+            tableName);
+
+    Seq<Rule<LogicalPlan>> optimizations = spark.experimental().extraOptimizations();
+    NestedDynamicPruning.install(spark);
+    try {
+      Dataset<Row> df = spark.sql(query);
+
+      assertEquals(
+          "Should have expected rows",
+          sql("SELECT * FROM %s WHERE id <= 20 ORDER BY id", tableName),
+          rowsToJava(df.collectAsList()));
+
+      // the plan lists 10 of the 20 join keys
+      String plan = df.queryExecution().executedPlan().toString();
+      assertThat(plan).contains("runtimeFilters=id IN (").contains(", ... 10 more)");
+    } finally {
+      spark.experimental().extraOptimizations_$eq(optimizations);
+    }
+  }
+
+  @TestTemplate
   public void scalarSubqueryWithUnsupportedPartitionPredicate() {
     sql("CREATE TABLE %s (id INT, part STRING) USING iceberg PARTITIONED BY (part)", tableName);
     configurePlanningMode(planningMode);
