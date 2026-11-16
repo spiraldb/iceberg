@@ -141,8 +141,8 @@ abstract class SparkRuntimeFilterableScan extends SparkPartitioningAwareScan<Par
         .filter(fieldId -> projection().findField(fieldId) != null)
         .forEach(filterFieldIds::add);
 
-    // a table can hold files of an earlier write format, whose readers keep the filtered rows
-    if (dataColumnFilters && readsOnlyVortex()) {
+    // a table can hold files of an earlier write format, which may not offer data columns
+    if (dataColumnFilters && readsOnly(readConf.dataColumnRuntimeFilteringFormats())) {
       dataFilterColumns(projection()).forEach(field -> filterFieldIds.add(field.fieldId()));
     }
 
@@ -159,33 +159,33 @@ abstract class SparkRuntimeFilterableScan extends SparkPartitioningAwareScan<Par
    * extensions stops pruning subqueries from nesting into each other. Their runtime filters drop
    * files by their column metrics, and reach the file readers with the residual.
    *
-   * <p>Only tables that write Vortex files offer them. A runtime filter delays the scan until its
-   * subquery completes. The Vortex reader drops the rows that the filter rules out, which is worth
-   * that delay. Other readers keep those rows, and the files of most tables are not clustered by
-   * the join keys, so the filter often drops nothing and only adds the delay.
+   * <p>Only tables that write a format of {@link SparkReadConf#dataColumnRuntimeFilteringFormats()}
+   * offer them, by default only Vortex. A runtime filter delays the scan until its subquery
+   * completes. The Vortex reader drops the rows that the filter rules out, which is worth that
+   * delay. Other readers keep those rows, and the files of most tables are not clustered by the
+   * join keys, so the filter often drops nothing and only adds the delay.
    */
   static boolean offersDataColumns(SparkSession spark, Table table, SparkReadConf readConf) {
     return readConf.dataColumnRuntimeFilteringEnabled()
         && NestedDynamicPruning.installed(spark)
-        && writesVortex(table);
+        && readConf.dataColumnRuntimeFilteringFormats().contains(writeFormat(table));
   }
 
-  private static boolean writesVortex(Table table) {
+  private static FileFormat writeFormat(Table table) {
     String format =
         table
             .properties()
             .getOrDefault(
                 TableProperties.DEFAULT_FILE_FORMAT, TableProperties.DEFAULT_FILE_FORMAT_DEFAULT);
-    return FileFormat.fromString(format) == FileFormat.VORTEX;
+    return FileFormat.fromString(format);
   }
 
-  /** Whether every file of this scan is a Vortex file, so its reader drops filtered rows. */
-  private boolean readsOnlyVortex() {
+  /** Whether every file of this scan has one of {@code formats}. */
+  private boolean readsOnly(Set<FileFormat> formats) {
     return tasks().stream()
         .allMatch(
             task ->
-                task.isFileScanTask()
-                    && task.asFileScanTask().file().format() == FileFormat.VORTEX);
+                task.isFileScanTask() && formats.contains(task.asFileScanTask().file().format()));
   }
 
   /** The data columns of {@code projection} that scans offer to runtime filtering. */
