@@ -30,6 +30,7 @@ import dev.vortex.jni.NativeRuntime;
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
@@ -62,6 +63,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
 
   private final InputFile inputFile;
   private final Optional<Expression> filterPredicate;
+  private final List<VortexLikeFilters.Like> likeFilters;
   private final long[] splitByteRange;
   private final byte[] posDeleteBitmap;
   private final boolean includeRowPosition;
@@ -83,6 +85,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
       Schema expectedSchema,
       List<Types.NestedField> projection,
       Optional<Expression> filterPredicate,
+      List<VortexLikeFilters.Like> likeFilters,
       long[] splitByteRange,
       byte[] posDeleteBitmap,
       boolean includeRowPosition,
@@ -98,6 +101,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     this.expectedSchema = expectedSchema;
     this.projection = projection;
     this.filterPredicate = filterPredicate;
+    this.likeFilters = likeFilters;
     this.splitByteRange = splitByteRange;
     this.posDeleteBitmap = posDeleteBitmap;
     this.includeRowPosition = includeRowPosition;
@@ -138,22 +142,6 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   private CloseableIterator<T> open(Session session, NativeReadable readable) {
     DataSource dataSource = DataSource.open(session, readable);
 
-    long[] rowRange = null;
-    if (splitByteRange != null) {
-      rowRange = toRowRange(splitByteRange, readable.length(), dataSource);
-      if (rowRange[0] >= rowRange[1]) {
-        // The byte range maps to zero rows: skip the scan entirely. An all-zero range must not
-        // reach the native scan, which interprets it as "no range set".
-        try {
-          readable.close();
-        } catch (IOException e) {
-          throw new org.apache.iceberg.exceptions.RuntimeIOException(
-              e, "Failed to close input source for %s", inputFile.location());
-        }
-        return CloseableIterator.empty();
-      }
-    }
-
     dev.vortex.relocated.org.apache.arrow.memory.BufferAllocator vortexAllocator =
         VortexArrowBridge.vortexAllocator();
     BufferAllocator allocator = VortexArrowBridge.arrowAllocator();
@@ -184,6 +172,23 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
                     icebergExpression,
                     caseSensitive));
 
+    if (!likeFilters.isEmpty()) {
+      dev.vortex.api.Expression likes =
+          ConvertFilterToVortex.convertLikes(
+              expectedSchema,
+              VortexSchemas.convert(vortexArrowSchema),
+              filterArrowSchema,
+              likeFilters,
+              caseSensitive);
+      if (likes != ConvertFilterToVortex.ALWAYS_TRUE) {
+        scanFilter =
+            Optional.of(
+                scanFilter
+                    .map(filter -> dev.vortex.api.Expression.and(filter, likes))
+                    .orElse(likes));
+      }
+    }
+
     // Vortex resolves projected columns by name and errors on any name not in the file. Each
     // expected column is bound to the file column with the same Iceberg id (so a column renamed
     // since write time is projected under its physical name) and is dropped when the file has no
@@ -197,6 +202,28 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     ImmutableList.Builder<String> fieldNames = ImmutableList.builder();
     ImmutableList.Builder<dev.vortex.api.Expression> expressions = ImmutableList.builder();
     addColumnProjections(fileArrowSchema, fieldNames, expressions);
+
+    long[] rowRange = null;
+    if (splitByteRange != null) {
+      rowRange =
+          toRowRange(
+              splitByteRange,
+              readable.length(),
+              dataSource,
+              NativeFiles.splits(
+                  session, readable, splitColumns(fieldNames.build(), fileArrowSchema)));
+      if (rowRange[0] >= rowRange[1]) {
+        // The byte range maps to zero rows: skip the scan entirely. An all-zero range must not
+        // reach the native scan, which interprets it as "no range set".
+        try {
+          readable.close();
+        } catch (IOException e) {
+          throw new org.apache.iceberg.exceptions.RuntimeIOException(
+              e, "Failed to close input source for %s", inputFile.location());
+        }
+        return CloseableIterator.empty();
+      }
+    }
 
     // Row position is not a stored column. When requested, materialize it from Vortex's `row_idx`
     // scan expression packed under the _pos metadata-column name, and append a matching _pos field
@@ -255,6 +282,20 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
       VortexBatchReader<T> batchTransform = batchReaderFunction.apply(readerArrowSchema);
       return new VortexBatchIterator<>(batchIterator, batchTransform);
     }
+  }
+
+  /**
+   * The file columns whose chunks the split follows: the projected columns. Finding the chunks of
+   * every column of a wide file costs much more than of the few columns a scan reads. A scan that
+   * projects no column, such as a count, follows the first file column.
+   */
+  private static List<String> splitColumns(
+      List<String> projected, org.apache.arrow.vector.types.pojo.Schema fileArrowSchema) {
+    if (!projected.isEmpty() || fileArrowSchema.getFields().isEmpty()) {
+      return projected;
+    }
+
+    return ImmutableList.of(fileArrowSchema.getFields().get(0).getName());
   }
 
   private void addColumnProjections(
@@ -340,16 +381,46 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
    * exact row count. Because every boundary maps through the same function, the contiguous byte
    * splits of a file map to contiguous, non-overlapping row ranges that cover every row exactly
    * once.
+   *
+   * <p>Each boundary then moves to the nearest natural split of the file, so a scan reads whole
+   * chunks: a boundary inside a chunk makes both neighbouring scans decode that chunk. Rounding is
+   * monotonic, so the ranges stay contiguous and still cover every row exactly once.
    */
-  private static long[] toRowRange(long[] byteRange, long fileLength, DataSource dataSource) {
+  private static long[] toRowRange(
+      long[] byteRange, long fileLength, DataSource dataSource, long[] chunkBoundaries) {
     Preconditions.checkState(
         dataSource.rowCount() instanceof DataSource.RowCount.Exact,
         "Cannot map a byte-range split to rows without an exact row count: %s",
         dataSource.rowCount());
     long totalRows = ((DataSource.RowCount.Exact) dataSource.rowCount()).value();
-    long begin = rowAt(byteRange[0], fileLength, totalRows);
-    long end = rowAt(byteRange[0] + byteRange[1], fileLength, totalRows);
+    long begin = nearestBoundary(rowAt(byteRange[0], fileLength, totalRows), chunkBoundaries);
+    long end =
+        nearestBoundary(
+            rowAt(byteRange[0] + byteRange[1], fileLength, totalRows), chunkBoundaries);
     return new long[] {begin, end};
+  }
+
+  private static long nearestBoundary(long row, long[] boundaries) {
+    if (boundaries.length == 0) {
+      return row;
+    }
+
+    int index = Arrays.binarySearch(boundaries, row);
+    if (index >= 0) {
+      return row;
+    }
+
+    int above = -index - 1;
+    if (above == 0) {
+      return boundaries[0];
+    }
+
+    if (above == boundaries.length) {
+      return boundaries[boundaries.length - 1];
+    }
+
+    long below = boundaries[above - 1];
+    return row - below <= boundaries[above] - row ? below : boundaries[above];
   }
 
   private static long rowAt(long byteOffset, long fileLength, long totalRows) {
