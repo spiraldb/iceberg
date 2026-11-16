@@ -20,7 +20,12 @@ package org.apache.iceberg.spark;
 
 import static org.apache.iceberg.PlanningMode.LOCAL;
 
+import java.util.Arrays;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.PlanningMode;
 import org.apache.iceberg.SupportsDistributedScanPlanning;
 import org.apache.iceberg.Table;
@@ -283,6 +288,22 @@ public class SparkReadConf {
         .sessionConf(SparkSQLProperties.DATA_COLUMN_RUNTIME_FILTERING_ENABLED)
         .defaultValue(SparkSQLProperties.DATA_COLUMN_RUNTIME_FILTERING_ENABLED_DEFAULT)
         .parse();
+  }
+
+  /** The file formats whose scans offer data columns to runtime filtering. */
+  public Set<FileFormat> dataColumnRuntimeFilteringFormats() {
+    String formats =
+        confParser
+            .stringConf()
+            .sessionConf(SparkSQLProperties.DATA_COLUMN_RUNTIME_FILTERING_FORMATS)
+            .defaultValue(SparkSQLProperties.DATA_COLUMN_RUNTIME_FILTERING_FORMATS_DEFAULT)
+            .parse();
+
+    return Arrays.stream(formats.split(","))
+        .map(String::trim)
+        .filter(format -> !format.isEmpty())
+        .map(format -> FileFormat.fromString(format.toLowerCase(Locale.ROOT)))
+        .collect(Collectors.toSet());
   }
 
   public int runtimeFilterMaxValues() {
