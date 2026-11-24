@@ -51,15 +51,12 @@ import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
 import org.apache.spark.sql.catalyst.optimizer.NestedDynamicPruning;
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan;
-import org.apache.spark.sql.catalyst.rules.Rule;
 import org.apache.spark.sql.execution.SparkPlan;
 import org.apache.spark.sql.execution.datasources.v2.BatchScanExec;
 import org.apache.spark.sql.internal.SQLConf;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
-import scala.collection.immutable.Seq;
 
 @ExtendWith(ParameterizedTestExtension.class)
 public class TestRuntimeFiltering extends TestBaseWithCatalog {
@@ -518,7 +515,7 @@ public class TestRuntimeFiltering extends TestBaseWithCatalog {
             "SELECT f.* FROM %s f JOIN dim d ON f.id = d.id AND d.date = DATE '1970-01-02'",
             tableName);
 
-    Seq<Rule<LogicalPlan>> optimizations = spark.experimental().extraOptimizations();
+    var optimizations = spark.experimental().extraOptimizations();
     NestedDynamicPruning.install(spark);
     try {
       if (!offered) {
@@ -581,7 +578,7 @@ public class TestRuntimeFiltering extends TestBaseWithCatalog {
                 + "ORDER BY id",
             tableName);
 
-    Seq<Rule<LogicalPlan>> optimizations = spark.experimental().extraOptimizations();
+    var optimizations = spark.experimental().extraOptimizations();
     NestedDynamicPruning.install(spark);
     try {
       // without adaptive execution, the leaves of the executed plan are the scans
