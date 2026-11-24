@@ -483,7 +483,7 @@ public class SparkScanBuilder
   private org.apache.iceberg.Scan buildIcebergBatchScan(boolean withStats, Schema expectedSchema) {
     Long snapshotId = readConf.snapshotId();
     Long asOfTimestamp = readConf.asOfTimestamp();
-    String branch = readConf.branch();
+    String scanBranch = readConf.branch();
     String tag = readConf.tag();
 
     Preconditions.checkArgument(
@@ -523,14 +523,14 @@ public class SparkScanBuilder
     if (startSnapshotId != null) {
       return buildIncrementalAppendScan(startSnapshotId, endSnapshotId, withStats, expectedSchema);
     } else {
-      return buildBatchScan(snapshotId, asOfTimestamp, branch, tag, withStats, expectedSchema);
+      return buildBatchScan(snapshotId, asOfTimestamp, scanBranch, tag, withStats, expectedSchema);
     }
   }
 
   private org.apache.iceberg.Scan buildBatchScan(
       Long snapshotId,
       Long asOfTimestamp,
-      String branch,
+      String scanBranch,
       String tag,
       boolean withStats,
       Schema expectedSchema) {
@@ -549,8 +549,8 @@ public class SparkScanBuilder
       scan = scan.asOfTime(asOfTimestamp);
     }
 
-    if (branch != null) {
-      scan = scan.useRef(branch);
+    if (scanBranch != null) {
+      scan = scan.useRef(scanBranch);
     }
 
     if (tag != null) {
@@ -558,7 +558,7 @@ public class SparkScanBuilder
     }
 
     // the schema that the scan reads with, as SnapshotScan chooses it
-    String ref = branch != null ? branch : tag;
+    String ref = scanBranch != null ? scanBranch : tag;
     Schema scanSchema =
         ref != null
             ? SnapshotUtil.schemaFor(table, ref)
