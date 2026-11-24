@@ -80,6 +80,9 @@ class SparkBatchQueryScan extends SparkPartitioningAwareScan<PartitionScanTask>
   // InclusiveMetricsEvaluator reads no value bounds for an IN with more literals than this
   private static final int METRICS_IN_LIMIT = 200;
 
+  // descriptions of a runtime IN filter show at most this many of its literals
+  private static final int DESCRIBED_IN_LIMIT = 10;
+
   private final Long snapshotId;
   private final Long startSnapshotId;
   private final Long endSnapshotId;
@@ -89,6 +92,8 @@ class SparkBatchQueryScan extends SparkPartitioningAwareScan<PartitionScanTask>
   private final SparkReadConf readConf;
   private final boolean dataColumnFilters;
   private Expression readerRuntimeFilter = Expressions.alwaysTrue();
+  private String runtimeFiltersDesc = "";
+  private String runtimeFiltersSummary = "";
 
   SparkBatchQueryScan(
       SparkSession spark,
@@ -245,6 +250,14 @@ class SparkBatchQueryScan extends SparkPartitioningAwareScan<PartitionScanTask>
       // save the evaluated filter for equals/hashCode
       runtimeFilterExpressions.add(runtimeFilterExpr);
 
+      // a runtime IN filter can hold millions of literals, and Spark compares scans many times, so
+      // build both descriptions once
+      this.runtimeFiltersDesc = Spark3Util.describe(runtimeFilterExpressions);
+      this.runtimeFiltersSummary =
+          runtimeFilterExpressions.stream()
+              .map(SparkBatchQueryScan::summarize)
+              .collect(Collectors.joining(", "));
+
       // readers skip the chunks and row groups the filter rules out, and the Vortex reader drops
       // the rows it rules out, which the join drops anyway
       if (dataColumnFilters) {
@@ -306,6 +319,45 @@ class SparkBatchQueryScan extends SparkPartitioningAwareScan<PartitionScanTask>
     return Expressions.and(
         Expressions.greaterThanOrEqual(pred.term(), min),
         Expressions.lessThanOrEqual(pred.term(), max));
+  }
+
+  /**
+   * Describes {@code filter} as {@link Spark3Util#describe(Expression)} does, but shows only the
+   * first {@link #DESCRIBED_IN_LIMIT} literals of each larger IN conjunct.
+   */
+  private static String summarize(Expression filter) {
+    if (filter instanceof And and) {
+      return "(" + summarize(and.left()) + " AND " + summarize(and.right()) + ")";
+    }
+
+    if (!(filter instanceof UnboundPredicate<?> pred)
+        || pred.op() != Expression.Operation.IN
+        || pred.literals().size() <= DESCRIBED_IN_LIMIT) {
+      return Spark3Util.describe(filter);
+    }
+
+    return summarizeIn(pred);
+  }
+
+  private static <T> String summarizeIn(UnboundPredicate<T> pred) {
+    List<T> shown =
+        pred.literals().stream()
+            .limit(DESCRIBED_IN_LIMIT)
+            .map(Literal::value)
+            .collect(Collectors.toList());
+    String described = Spark3Util.describe(Expressions.in(pred.term(), shown));
+    String hidden = (pred.literals().size() - shown.size()) + " more";
+    return described.substring(0, described.length() - 1) + ", ... " + hidden + ")";
+  }
+
+  /** The full description of the runtime filters, which tells apart scans with other filters. */
+  private synchronized String runtimeFiltersDesc() {
+    return runtimeFiltersDesc;
+  }
+
+  /** The description of the runtime filters for display, with large IN lists shortened. */
+  private synchronized String runtimeFiltersSummary() {
+    return runtimeFiltersSummary;
   }
 
   protected Map<String, DeleteFileSet> rewritableDeletes(boolean forDVs) {
@@ -401,7 +453,7 @@ class SparkBatchQueryScan extends SparkPartitioningAwareScan<PartitionScanTask>
         && Objects.equals(branch(), that.branch())
         && readSchema().equals(that.readSchema()) // compare Spark schemas to ignore field ids
         && filterExpressions().toString().equals(that.filterExpressions().toString())
-        && runtimeFilterExpressions.toString().equals(that.runtimeFilterExpressions.toString())
+        && runtimeFiltersDesc().equals(that.runtimeFiltersDesc())
         && Objects.equals(snapshotId, that.snapshotId)
         && Objects.equals(startSnapshotId, that.startSnapshotId)
         && Objects.equals(endSnapshotId, that.endSnapshotId)
@@ -416,7 +468,7 @@ class SparkBatchQueryScan extends SparkPartitioningAwareScan<PartitionScanTask>
         branch(),
         readSchema(),
         filterExpressions().toString(),
-        runtimeFilterExpressions.toString(),
+        runtimeFiltersDesc(),
         snapshotId,
         startSnapshotId,
         endSnapshotId,
@@ -432,7 +484,7 @@ class SparkBatchQueryScan extends SparkPartitioningAwareScan<PartitionScanTask>
         branch(),
         expectedSchema().asStruct(),
         filterExpressions(),
-        runtimeFilterExpressions,
+        runtimeFiltersSummary(),
         caseSensitive());
   }
 }
