@@ -631,7 +631,8 @@ public class SparkScanBuilder
   }
 
   private boolean offersDataColumns() {
-    return dataColumnRuntimeFilters && SparkBatchQueryScan.offersDataColumns(spark, readConf);
+    return dataColumnRuntimeFilters
+        && SparkBatchQueryScan.offersDataColumns(spark, table, readConf);
   }
 
   @SuppressWarnings("CyclomaticComplexity")
