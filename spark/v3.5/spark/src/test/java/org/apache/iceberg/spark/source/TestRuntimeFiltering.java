@@ -480,6 +480,17 @@ public class TestRuntimeFiltering extends TestBaseWithCatalog {
     assertDataColumnRuntimeFilter("vortex", true);
   }
 
+  @TestTemplate
+  public void testDataColumnOfListedParquetFormat() throws NoSuchTableException {
+    String formats = SparkSQLProperties.DATA_COLUMN_RUNTIME_FILTERING_FORMATS;
+    spark.conf().set(formats, "vortex, parquet");
+    try {
+      assertDataColumnRuntimeFilter("parquet", true);
+    } finally {
+      spark.conf().unset(formats);
+    }
+  }
+
   private void assertDataColumnRuntimeFilter(String format, boolean offered)
       throws NoSuchTableException {
     sql(

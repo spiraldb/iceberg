@@ -52,6 +52,11 @@ public class SparkSQLProperties {
       "spark.sql.iceberg.runtime-filtering.data-columns.enabled";
   public static final boolean DATA_COLUMN_RUNTIME_FILTERING_ENABLED_DEFAULT = true;
 
+  // Controls which file formats offer data columns to runtime filtering, as a comma-separated list
+  public static final String DATA_COLUMN_RUNTIME_FILTERING_FORMATS =
+      "spark.sql.iceberg.runtime-filtering.data-columns.formats";
+  public static final String DATA_COLUMN_RUNTIME_FILTERING_FORMATS_DEFAULT = "vortex";
+
   // Controls how many values of a runtime IN filter reach the file readers as a set. A larger set
   // reaches them as the range between its smallest and largest value.
   public static final String RUNTIME_FILTER_MAX_VALUES =
