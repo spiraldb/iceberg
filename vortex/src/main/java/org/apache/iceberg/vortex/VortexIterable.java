@@ -159,35 +159,8 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
       fileArrowSchema = VortexSchemas.withFieldIds(fileArrowSchema, mapping);
     }
 
-    // The filter binds to the expected schema and resolves columns against the id-tagged file
-    // schema, the same way the projection below does.
-    org.apache.arrow.vector.types.pojo.Schema filterArrowSchema = fileArrowSchema;
     Optional<dev.vortex.api.Expression> scanFilter =
-        filterPredicate.map(
-            icebergExpression ->
-                ConvertFilterToVortex.convert(
-                    expectedSchema,
-                    VortexSchemas.convert(vortexArrowSchema),
-                    filterArrowSchema,
-                    icebergExpression,
-                    caseSensitive));
-
-    if (!likeFilters.isEmpty()) {
-      dev.vortex.api.Expression likes =
-          ConvertFilterToVortex.convertLikes(
-              expectedSchema,
-              VortexSchemas.convert(vortexArrowSchema),
-              filterArrowSchema,
-              likeFilters,
-              caseSensitive);
-      if (likes != ConvertFilterToVortex.ALWAYS_TRUE) {
-        scanFilter =
-            Optional.of(
-                scanFilter
-                    .map(filter -> dev.vortex.api.Expression.and(filter, likes))
-                    .orElse(likes));
-      }
-    }
+        scanFilter(VortexSchemas.convert(vortexArrowSchema), fileArrowSchema);
 
     // Vortex resolves projected columns by name and errors on any name not in the file. Each
     // expected column is bound to the file column with the same Iceberg id (so a column renamed
@@ -244,29 +217,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
             expressions.build().toArray(dev.vortex.api.Expression[]::new),
             false);
 
-    ImmutableScanOptions.Builder optionsBuilder = ScanOptions.builder().projection(scanProjection);
-    // Vortex scans resolve partitions concurrently and yield them out of order by default. Row
-    // readers surface records positionally (like every other iceberg file format reader), so the
-    // row path must preserve file order. The batch path stays unordered: Spark derives row
-    // positions from the scan's row_idx values rather than emission order.
-    if (rowReaderFunc != null) {
-      optionsBuilder.ordered(true);
-    }
-    scanFilter.ifPresent(optionsBuilder::filter);
-    if (rowRange != null) {
-      optionsBuilder.rowRangeBegin(rowRange[0]).rowRangeEnd(rowRange[1]);
-    }
-
-    // Apply position deletes natively: the bitmap holds file-relative row positions of deleted rows
-    // (portable 64-bit Roaring), and Vortex drops them from the scan so they are never
-    // materialized.
-    if (posDeleteBitmap != null) {
-      optionsBuilder
-          .selectionRoaringBitmap(posDeleteBitmap)
-          .selectionMode(ScanOptions.SelectionMode.EXCLUDE_ROARING);
-    }
-
-    Scan scan = dataSource.scan(optionsBuilder.build());
+    Scan scan = dataSource.scan(scanOptions(scanProjection, scanFilter, rowRange));
     Preconditions.checkNotNull(scan, "scan");
 
     PartitionBatchIterator batchIterator =
@@ -282,6 +233,62 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
       VortexBatchReader<T> batchTransform = batchReaderFunction.apply(readerArrowSchema);
       return new VortexBatchIterator<>(batchIterator, batchTransform);
     }
+  }
+
+  /**
+   * The scan filter: the Iceberg filter and the LIKE filters. The filter binds to the expected
+   * schema and resolves columns against the id-tagged file schema, the same way the projection
+   * does.
+   */
+  private Optional<dev.vortex.api.Expression> scanFilter(
+      Schema fileSchema, org.apache.arrow.vector.types.pojo.Schema fileArrowSchema) {
+    Optional<dev.vortex.api.Expression> filter =
+        filterPredicate.map(
+            icebergExpression ->
+                ConvertFilterToVortex.convert(
+                    expectedSchema, fileSchema, fileArrowSchema, icebergExpression, caseSensitive));
+    if (likeFilters.isEmpty()) {
+      return filter;
+    }
+
+    dev.vortex.api.Expression likes =
+        ConvertFilterToVortex.convertLikes(
+            expectedSchema, fileSchema, fileArrowSchema, likeFilters, caseSensitive);
+    if (likes == ConvertFilterToVortex.ALWAYS_TRUE) {
+      return filter;
+    }
+
+    return Optional.of(
+        filter.map(predicate -> dev.vortex.api.Expression.and(predicate, likes)).orElse(likes));
+  }
+
+  private ScanOptions scanOptions(
+      dev.vortex.api.Expression scanProjection,
+      Optional<dev.vortex.api.Expression> filter,
+      long[] rowRange) {
+    ImmutableScanOptions.Builder builder = ScanOptions.builder().projection(scanProjection);
+    // Vortex scans resolve partitions concurrently and yield them out of order by default. Row
+    // readers surface records positionally (like every other iceberg file format reader), so the
+    // row path must preserve file order. The batch path stays unordered: Spark derives row
+    // positions from the scan's row_idx values rather than emission order.
+    if (rowReaderFunc != null) {
+      builder.ordered(true);
+    }
+    filter.ifPresent(builder::filter);
+    if (rowRange != null) {
+      builder.rowRangeBegin(rowRange[0]).rowRangeEnd(rowRange[1]);
+    }
+
+    // Apply position deletes natively: the bitmap holds file-relative row positions of deleted rows
+    // (portable 64-bit Roaring), and Vortex drops them from the scan so they are never
+    // materialized.
+    if (posDeleteBitmap != null) {
+      builder
+          .selectionRoaringBitmap(posDeleteBitmap)
+          .selectionMode(ScanOptions.SelectionMode.EXCLUDE_ROARING);
+    }
+
+    return builder.build();
   }
 
   /**
@@ -395,8 +402,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     long totalRows = ((DataSource.RowCount.Exact) dataSource.rowCount()).value();
     long begin = nearestBoundary(rowAt(byteRange[0], fileLength, totalRows), chunkBoundaries);
     long end =
-        nearestBoundary(
-            rowAt(byteRange[0] + byteRange[1], fileLength, totalRows), chunkBoundaries);
+        nearestBoundary(rowAt(byteRange[0] + byteRange[1], fileLength, totalRows), chunkBoundaries);
     return new long[] {begin, end};
   }
 
