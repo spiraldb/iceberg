@@ -186,8 +186,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
               NativeFiles.splits(
                   session, readable, splitColumns(fieldNames.build(), fileArrowSchema)));
       if (rowRange[0] >= rowRange[1]) {
-        // The byte range maps to zero rows: skip the scan entirely. An all-zero range must not
-        // reach the native scan, which interprets it as "no range set".
+        // The byte range maps to zero rows: skip the scan entirely.
         try {
           readable.close();
         } catch (IOException e) {
