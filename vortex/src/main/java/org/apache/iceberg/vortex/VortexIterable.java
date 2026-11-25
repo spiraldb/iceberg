@@ -18,6 +18,8 @@
  */
 package org.apache.iceberg.vortex;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import dev.vortex.api.DataSource;
 import dev.vortex.api.ImmutableScanOptions;
 import dev.vortex.api.Partition;
@@ -60,6 +62,16 @@ import org.slf4j.LoggerFactory;
 
 public class VortexIterable<T> extends CloseableGroup implements CloseableIterable<T> {
   private static final Logger LOG = LoggerFactory.getLogger(VortexIterable.class);
+
+  // Bounds the cached name mappings by the size of their JSON text.
+  private static final long MAX_CACHED_MAPPING_CHARS = 16L * 1024 * 1024;
+
+  // Data files never change, so the name mapping of a file read once serves all later splits.
+  private static final Cache<String, FileNameMapping> FILE_MAPPINGS =
+      Caffeine.newBuilder()
+          .maximumWeight(MAX_CACHED_MAPPING_CHARS)
+          .weigher((String location, FileNameMapping mapping) -> mapping.weight())
+          .build();
 
   private final InputFile inputFile;
   private final Optional<Expression> filterPredicate;
@@ -140,6 +152,10 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   }
 
   private CloseableIterator<T> open(Session session, NativeReadable readable) {
+    // Read the name mapping before the data source opens the file. The first open of a file reads
+    // its tail, which usually holds the mapping too; a later open finds the footer in the session
+    // cache and must read the mapping separately.
+    NameMapping fileMapping = fileNameMapping(session, readable);
     DataSource dataSource = DataSource.open(session, readable);
 
     dev.vortex.relocated.org.apache.arrow.memory.BufferAllocator vortexAllocator =
@@ -153,7 +169,6 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
     // A file whose writer stored a name mapping in Vortex file metadata carries field ids: tag the
     // Arrow fields with them so readers bind columns by id. A file that stores none falls back to
     // the table's name mapping; without either, binding falls back to by name.
-    NameMapping fileMapping = readNameMapping(session, readable);
     NameMapping mapping = fileMapping != null ? fileMapping : nameMapping;
     if (mapping != null) {
       fileArrowSchema = VortexSchemas.withFieldIds(fileArrowSchema, mapping);
@@ -319,30 +334,46 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   }
 
   /**
-   * Reads the name mapping the file was written with from Vortex file metadata, or returns null
-   * when the file carries none. A file that has no entry is not an error, and neither is one whose
-   * entry will not parse: both fall back to binding by name rather than failing the scan.
+   * Returns the name mapping the file was written with, or null when the file carries none. A file
+   * that has no entry is not an error, and neither is one whose entry will not parse: both fall
+   * back to binding by name rather than failing the scan.
    */
-  private NameMapping readNameMapping(Session session, NativeReadable readable) {
+  private NameMapping fileNameMapping(Session session, NativeReadable readable) {
+    FileNameMapping cached = FILE_MAPPINGS.getIfPresent(inputFile.location());
+    if (cached != null) {
+      return cached.mapping();
+    }
+
     byte[] json;
     try {
       json = NativeFiles.readMetadata(session, readable).get(VortexSchemas.NAME_MAPPING_KEY);
     } catch (RuntimeException e) {
+      // The read can fail for a transient reason, so the result is not cached.
       LOG.warn("Failed to read Vortex file metadata for {}", inputFile.location(), e);
       return null;
     }
 
+    FileNameMapping mapping = parseNameMapping(json);
+    FILE_MAPPINGS.put(inputFile.location(), mapping);
+    return mapping.mapping();
+  }
+
+  private FileNameMapping parseNameMapping(byte[] json) {
     if (json == null) {
-      return null;
+      return new FileNameMapping(null, 0);
     }
 
     try {
-      return NameMappingParser.fromJson(new String(json, StandardCharsets.UTF_8));
+      String text = new String(json, StandardCharsets.UTF_8);
+      return new FileNameMapping(NameMappingParser.fromJson(text), text.length());
     } catch (RuntimeException e) {
       LOG.warn("Ignoring unreadable name mapping in {}", inputFile.location(), e);
-      return null;
+      return new FileNameMapping(null, 0);
     }
   }
+
+  /** The name mapping a file was written with, or null when it has none, and its cache weight. */
+  private record FileNameMapping(NameMapping mapping, int weight) {}
 
   /**
    * Row lineage: projects {@code _row_id} as a nested pack of the stored column (when the file has
