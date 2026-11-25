@@ -563,7 +563,12 @@ public class SparkScanBuilder
         ref != null
             ? SnapshotUtil.schemaFor(table, ref)
             : SnapshotUtil.schemaFor(table, snapshotId, asOfTimestamp);
-    scan = includeStats(scan, scanSchema, expectedSchema, withStats);
+    // a REST catalog plans the scan with the schema of the snapshot that it reads
+    Schema snapshotSchema =
+        scan.snapshot() != null
+            ? SnapshotUtil.schemaFor(table, scan.snapshot().snapshotId())
+            : scanSchema;
+    scan = includeStats(scan, scanSchema, snapshotSchema, expectedSchema, withStats);
 
     return configureSplitPlanning(scan);
   }
@@ -579,7 +584,7 @@ public class SparkScanBuilder
             .project(expectedSchema)
             .metricsReporter(metricsReporter);
 
-    scan = includeStats(scan, table.schema(), expectedSchema, withStats);
+    scan = includeStats(scan, table.schema(), table.schema(), expectedSchema, withStats);
 
     if (endSnapshotId != null) {
       scan = scan.toSnapshot(endSnapshotId);
@@ -590,35 +595,45 @@ public class SparkScanBuilder
 
   /**
    * Asks {@code scan} for the column stats that the Spark scan uses. The scan finds each stats
-   * column by its name in {@code scanSchema}, the schema that it reads with.
+   * column by its name in {@code scanSchema}, the schema that it reads with, and a REST catalog
+   * finds it in {@code snapshotSchema}, the schema of the snapshot that the scan reads.
    */
   private <S extends org.apache.iceberg.Scan<S, ?, ?>> S includeStats(
-      S scan, Schema scanSchema, Schema projection, boolean withStats) {
+      S scan, Schema scanSchema, Schema snapshotSchema, Schema projection, boolean withStats) {
     if (withStats) {
       return scan.includeColumnStats();
     }
 
     // runtime filters on data columns drop files by the metrics of those columns. A column can
-    // have a different name in the scan schema, or no field at all when it was added after the
+    // have a different name in each schema, or no field at all when it was added after the
     // snapshot that the scan reads, so find each name by the field ID.
     List<String> statsColumns = Lists.newArrayList();
     if (readConf.columnAwareSplitSizeEnabled() && readConf.adaptiveSplitSizeEnabled()) {
       // adaptive split sizing counts the bytes of the projected columns, see SparkScan
       projection.columns().stream()
-          .map(field -> scanSchema.findColumnName(field.fieldId()))
+          .map(field -> statsColumnName(scanSchema, snapshotSchema, field.fieldId()))
           .filter(Objects::nonNull)
           .forEach(statsColumns::add);
     }
 
     if (offersDataColumns()) {
       SparkBatchQueryScan.dataFilterColumns(projection).stream()
-          .map(field -> scanSchema.findColumnName(field.fieldId()))
+          .map(field -> statsColumnName(scanSchema, snapshotSchema, field.fieldId()))
           .filter(Objects::nonNull)
           .forEach(statsColumns::add);
     }
 
     List<String> distinct = statsColumns.stream().distinct().collect(Collectors.toList());
     return distinct.isEmpty() ? scan : scan.includeColumnStats(distinct);
+  }
+
+  /**
+   * Returns the name of a stats column that both schemas hold under the same name, or null. A
+   * column renamed or added after the snapshot has a name that only one of them can find.
+   */
+  private static String statsColumnName(Schema scanSchema, Schema snapshotSchema, int fieldId) {
+    String name = scanSchema.findColumnName(fieldId);
+    return name != null && name.equals(snapshotSchema.findColumnName(fieldId)) ? name : null;
   }
 
   /**
