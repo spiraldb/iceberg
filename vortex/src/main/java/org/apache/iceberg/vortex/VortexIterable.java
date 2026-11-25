@@ -421,7 +421,9 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
    *
    * <p>Each boundary then moves to the nearest natural split of the file, so a scan reads whole
    * chunks: a boundary inside a chunk makes both neighbouring scans decode that chunk. Rounding is
-   * monotonic, so the ranges stay contiguous and still cover every row exactly once.
+   * monotonic, so the ranges stay contiguous and still cover every row exactly once. A file with a
+   * single natural split keeps the boundaries where they are, because rounding would put all of its
+   * rows into one scan.
    */
   private static long[] toRowRange(
       long[] byteRange, long fileLength, DataSource dataSource, long[] chunkBoundaries) {
@@ -437,7 +439,7 @@ public class VortexIterable<T> extends CloseableGroup implements CloseableIterab
   }
 
   private static long nearestBoundary(long row, long[] boundaries) {
-    if (boundaries.length == 0) {
+    if (boundaries.length <= 2) {
       return row;
     }
 
